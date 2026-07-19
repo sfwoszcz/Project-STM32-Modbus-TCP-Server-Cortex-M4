@@ -93,3 +93,17 @@ For the clean GitHub example, the `platform_stm32.c` entry is therefore removed
 from the Keil target. This is a repository cleanup, not a claim that the
 cleaned project itself was independently rebuilt by the external tester. The
 external evidence remains tied to the archive SHA-256 recorded above.
+
+## Pending eight-function revalidation
+
+On 2026-07-19, the example was extended from the historical FC03-only harness to
+a selectable eight-function master candidate:
+
+- FC01, FC02, FC03, and FC04 reads
+- FC05, FC06, FC0F, and FC10 writes
+- automatic read-back verification for every write test
+- portable transaction-engine timeout, retry, and diagnostic handling
+- addresses 0 through 9 with quantity 10 where applicable
+
+This updated candidate has not yet replaced the historical evidence above.
+ArmClang/Keil compilation and physical STM32F767 testing are still pending.

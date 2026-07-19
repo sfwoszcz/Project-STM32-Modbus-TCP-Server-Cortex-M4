@@ -97,7 +97,7 @@ A final STM32 firmware ELF/BIN/HEX cannot be produced without board-specific STM
 
 Integration and current RTU scope are documented in `README.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
 
-The transaction engine is host verified. It has not yet been integrated into or hardware-validated with the externally tested STM32F767 example.
+The transaction engine is host verified and is now integrated into the STM32F767 TTL-UART example as a selectable eight-function candidate. External ArmClang/Keil compilation and physical hardware revalidation of that updated example are still pending.
 
 ## External STM32F767 hardware validation
 
