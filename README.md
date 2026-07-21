@@ -95,7 +95,7 @@ App/
 Examples/
 ├── posix_server.c            Local functional demo
 ├── stm32_cube_main.c         CubeMX integration reference
-└── STM32F767_RTU_Master/    FC03-validated STM32F767 example; eight-function candidate
+└── STM32F767_RTU_Master/    FC01-FC04 hardware-validated STM32F767 example
 
 Tests/
 ├── host/                     Unit, transaction, and socket-level tests
