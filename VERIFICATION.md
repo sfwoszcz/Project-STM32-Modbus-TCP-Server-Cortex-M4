@@ -2,6 +2,8 @@
 
 Verification performed on 2026-07-19.
 
+External STM32F767 hardware evidence updated on 2026-07-21.
+
 ## Successful checks
 
 | Check | Result |
@@ -97,7 +99,7 @@ A final STM32 firmware ELF/BIN/HEX cannot be produced without board-specific STM
 
 Integration and current RTU scope are documented in `README.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
 
-The transaction engine is host verified and is now integrated into the STM32F767 TTL-UART example as a selectable eight-function candidate. External ArmClang/Keil compilation and physical hardware revalidation of that updated example are still pending.
+The transaction engine is host verified and integrated into the STM32F767 TTL-UART example as a selectable eight-function candidate. The updated project was externally rebuilt with ArmClang 6.22 with zero errors and zero warnings. FC01, FC02, FC03, and FC04 are externally hardware validated. FC05, FC06, FC0F, and FC10 remain host verified with external hardware validation pending because the available slave software could not execute the write requests.
 
 ## External STM32F767 hardware validation
 

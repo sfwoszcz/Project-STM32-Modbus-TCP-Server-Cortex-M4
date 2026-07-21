@@ -112,8 +112,11 @@ The historical FC03 configuration has external Keil and hardware evidence in
 
 The current eight-function candidate has passed the repository regression suite,
 strict host-side adapter compilation/simulation, and Keil project XML parsing.
-It still requires an ArmClang/Keil rebuild and physical STM32F767 testing for
-all eight selected functions.
+It was also rebuilt externally with ArmClang 6.22 with zero errors and zero
+warnings. FC01, FC02, FC03, and FC04 are externally hardware validated.
+FC05, FC06, FC0F, and FC10 remain host verified with external hardware
+validation pending because the available slave software could not exercise
+the write requests.
 
 ## Safety and scope
 

@@ -12,8 +12,11 @@
 7. Flash the resulting image to the target board.
 
 The historical FC03 validation used µVision 5.41 and ArmClang 6.22 and reported
-zero errors and zero warnings. The updated eight-function candidate must be
-rebuilt again before it is considered externally validated.
+zero errors and zero warnings. The updated eight-function candidate was also
+rebuilt externally with ArmClang 6.22 with zero errors and zero warnings.
+FC01 through FC04 now have external STM32F767 hardware evidence. FC05, FC06,
+FC0F, and FC10 remain pending because the tester's slave software could not
+exercise the write requests.
 
 ## 2. Serial connection
 
