@@ -14,10 +14,12 @@ add_library(modbus_tcp_core STATIC
     App/src/modbus_protocol.c
     App/src/modbus_crc16.c
     App/src/modbus_rtu.c
+    App/src/modbus_rtu_diagnostics.c
     App/src/modbus_rtu_master.c
     App/src/modbus_rtu_master_transaction.c
 )
 target_include_directories(modbus_tcp_core PUBLIC App/include)
+target_compile_definitions(modbus_tcp_core PUBLIC MBRTU_ENABLE_DIAGNOSTICS=1)
 
 add_executable(modbus_posix_server Examples/posix_server.c)
 target_link_libraries(modbus_posix_server PRIVATE modbus_tcp_core)
@@ -31,11 +33,23 @@ target_link_libraries(modbus_pdu_tests PRIVATE modbus_tcp_core)
 add_executable(modbus_rtu_tests Tests/host/test_modbus_rtu.c)
 target_link_libraries(modbus_rtu_tests PRIVATE modbus_tcp_core)
 
+add_executable(modbus_rtu_legacy_link_tests
+    Tests/host/test_modbus_rtu.c
+    App/src/modbus.c
+    App/src/modbus_protocol.c
+    App/src/modbus_crc16.c
+    App/src/modbus_rtu.c
+)
+target_include_directories(modbus_rtu_legacy_link_tests PRIVATE App/include)
+
 add_executable(modbus_rtu_master_tests Tests/host/test_modbus_rtu_master.c)
 target_link_libraries(modbus_rtu_master_tests PRIVATE modbus_tcp_core)
 
 add_executable(modbus_rtu_master_transaction_tests Tests/host/test_modbus_rtu_master_transaction.c)
 target_link_libraries(modbus_rtu_master_transaction_tests PRIVATE modbus_tcp_core)
+
+add_executable(modbus_rtu_diagnostics_tests Tests/host/test_modbus_rtu_diagnostics.c)
+target_link_libraries(modbus_rtu_diagnostics_tests PRIVATE modbus_tcp_core)
 
 add_executable(modbus_rtu_timing_tests Tests/host/test_modbus_rtu_timing.c)
 target_link_libraries(modbus_rtu_timing_tests PRIVATE modbus_tcp_core)
@@ -63,8 +77,10 @@ enable_testing()
 add_test(NAME crc16 COMMAND modbus_crc16_tests)
 add_test(NAME pdu COMMAND modbus_pdu_tests)
 add_test(NAME rtu COMMAND modbus_rtu_tests)
+add_test(NAME rtu_legacy_link COMMAND modbus_rtu_legacy_link_tests)
 add_test(NAME rtu_master COMMAND modbus_rtu_master_tests)
 add_test(NAME rtu_master_transaction COMMAND modbus_rtu_master_transaction_tests)
+add_test(NAME rtu_diagnostics COMMAND modbus_rtu_diagnostics_tests)
 add_test(NAME rtu_timing COMMAND modbus_rtu_timing_tests)
 add_test(NAME protocol COMMAND modbus_protocol_tests)
 add_test(NAME register_map COMMAND register_selftest)

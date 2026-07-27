@@ -40,6 +40,37 @@ static int transaction_is_initialized(const mbrtum_transaction_t *transaction)
                MBRTUM_TXN_INITIALIZATION_COOKIE;
 }
 
+static int diagnostic_subfunction_is_state_changing(uint16_t subfunction)
+{
+    return subfunction == MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS ||
+           subfunction == MBRTU_DIAG_SUB_FORCE_LISTEN_ONLY ||
+           subfunction == MBRTU_DIAG_SUB_CLEAR_COUNTERS_AND_REGISTER ||
+           subfunction == MBRTU_DIAG_SUB_CLEAR_OVERRUN_COUNTER;
+}
+
+static int diagnostic_subfunction_is_supported(uint16_t subfunction)
+{
+    switch (subfunction) {
+    case MBRTU_DIAG_SUB_RETURN_QUERY_DATA:
+    case MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS:
+    case MBRTU_DIAG_SUB_RETURN_DIAGNOSTIC_REGISTER:
+    case MBRTU_DIAG_SUB_FORCE_LISTEN_ONLY:
+    case MBRTU_DIAG_SUB_CLEAR_COUNTERS_AND_REGISTER:
+    case MBRTU_DIAG_SUB_RETURN_BUS_MESSAGE_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_BUS_COMM_ERROR_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_BUS_EXCEPTION_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_MESSAGE_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_NO_RESPONSE_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_NAK_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_BUSY_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_BUS_OVERRUN_COUNT:
+    case MBRTU_DIAG_SUB_CLEAR_OVERRUN_COUNTER:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static int request_adu_matches_descriptor(const mbrtum_request_t *request,
                                           const uint8_t *adu,
                                           size_t adu_length)
@@ -55,6 +86,58 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
     }
     if (request->slave_address == 0u && request->expects_response != 0u) {
         return 0;
+    }
+
+    if (request->function == MBRTUM_FC_DIAGNOSTICS) {
+        uint16_t request_data = 0u;
+        uint8_t expected_response = (uint8_t)(
+            request->slave_address != MODBUS_RTU_BROADCAST_ADDRESS &&
+            request->start_address != MBRTU_DIAG_SUB_FORCE_LISTEN_ONLY);
+
+        if (!diagnostic_subfunction_is_supported(request->start_address) ||
+            request->quantity > 250u ||
+            (request->quantity % 2u) != 0u || request->value != 0u ||
+            adu_length != 6u + (size_t)request->quantity ||
+            adu[2] != (uint8_t)(request->start_address >> 8u) ||
+            adu[3] != (uint8_t)request->start_address ||
+            request->expects_response != expected_response) {
+            return 0;
+        }
+        if (request->slave_address == MODBUS_RTU_BROADCAST_ADDRESS &&
+            !diagnostic_subfunction_is_state_changing(
+                request->start_address)) {
+            return 0;
+        }
+        if (request->start_address == MBRTU_DIAG_SUB_RETURN_QUERY_DATA) {
+            /* The query-data payload may contain any even number of bytes. */
+        } else {
+            if (request->quantity != 2u) {
+                return 0;
+            }
+            request_data = (uint16_t)(((uint16_t)adu[4] << 8u) |
+                                      (uint16_t)adu[5]);
+            if (request->start_address ==
+                MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS) {
+                if (request_data != 0x0000u && request_data != 0xFF00u) {
+                    return 0;
+                }
+            } else if (request_data != 0u) {
+                return 0;
+            }
+        }
+    } else if (request->function ==
+                   MBRTUM_FC_READ_EXCEPTION_STATUS ||
+               request->function ==
+                   MBRTUM_FC_GET_COMM_EVENT_COUNTER ||
+               request->function ==
+                   MBRTUM_FC_GET_COMM_EVENT_LOG) {
+        if (request->slave_address == MODBUS_RTU_BROADCAST_ADDRESS ||
+            request->expects_response != 1u ||
+            request->start_address != 0u || request->quantity != 0u ||
+            request->value != 0u ||
+            adu_length != MBRTUM_TXN_MIN_ADU_SIZE) {
+            return 0;
+        }
     }
 
     calculated_crc = mb_crc16(adu, adu_length - 2u);
@@ -311,10 +394,13 @@ int mbrtum_transaction_on_response(mbrtum_transaction_t *transaction,
     transaction->response_adu_length = response_adu_length;
     memset(&transaction->response, 0, sizeof(transaction->response));
 
-    result = mbrtum_process_response(&transaction->request,
-                                     transaction->response_adu,
-                                     transaction->response_adu_length,
-                                     &transaction->response);
+    result = mbrtum_process_response_with_request_adu(
+        &transaction->request,
+        transaction->request_adu,
+        transaction->request_adu_length,
+        transaction->response_adu,
+        transaction->response_adu_length,
+        &transaction->response);
     transaction->protocol_result = result;
 
     if (result == MBRTUM_OK) {

@@ -4,6 +4,8 @@ PYTHON ?= python3
 BUILD ?= build
 
 CPPFLAGS ?= -IApp/include -ITests/stm32
+CPPFLAGS += -DMBRTU_ENABLE_DIAGNOSTICS=1
+LEGACY_CPPFLAGS := $(filter-out -DMBRTU_ENABLE_DIAGNOSTICS=1,$(CPPFLAGS))
 CFLAGS ?= -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror
 LDFLAGS ?=
 
@@ -12,6 +14,7 @@ CORE_SOURCES := \
   App/src/modbus_protocol.c \
   App/src/modbus_crc16.c \
   App/src/modbus_rtu.c \
+  App/src/modbus_rtu_diagnostics.c \
   App/src/modbus_rtu_master.c \
   App/src/modbus_rtu_master_transaction.c
 CORE_OBJECTS := $(CORE_SOURCES:%.c=$(BUILD)/%.o)
@@ -19,8 +22,10 @@ LIBRARY := $(BUILD)/libmodbus_tcp_core.a
 CRC_TEST := $(BUILD)/modbus_crc16_tests
 PDU_TEST := $(BUILD)/modbus_pdu_tests
 RTU_TEST := $(BUILD)/modbus_rtu_tests
+RTU_LEGACY_LINK_TEST := $(BUILD)/modbus_rtu_legacy_link_tests
 RTU_MASTER_TEST := $(BUILD)/modbus_rtu_master_tests
 RTU_MASTER_TRANSACTION_TEST := $(BUILD)/modbus_rtu_master_transaction_tests
+RTU_DIAGNOSTICS_TEST := $(BUILD)/modbus_rtu_diagnostics_tests
 RTU_TIMING_TEST := $(BUILD)/modbus_rtu_timing_tests
 PROTOCOL_TEST := $(BUILD)/modbus_protocol_tests
 SELFTEST := $(BUILD)/register_selftest
@@ -47,8 +52,8 @@ demo: $(POSIX_SERVER)
 
 compile-check: $(LWIP_CHECK_OBJECTS)
 
-unit-tests: $(CRC_TEST) $(PDU_TEST) $(RTU_TEST) $(RTU_MASTER_TEST) \
-	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_TIMING_TEST) $(PROTOCOL_TEST) $(SELFTEST)
+unit-tests: $(CRC_TEST) $(PDU_TEST) $(RTU_TEST) $(RTU_LEGACY_LINK_TEST) $(RTU_MASTER_TEST) \
+	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_DIAGNOSTICS_TEST) $(RTU_TIMING_TEST) $(PROTOCOL_TEST) $(SELFTEST)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -70,11 +75,21 @@ $(RTU_TEST): Tests/host/test_modbus_rtu.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
+$(RTU_LEGACY_LINK_TEST): Tests/host/test_modbus_rtu.c \
+	App/src/modbus.c App/src/modbus_protocol.c App/src/modbus_crc16.c \
+	App/src/modbus_rtu.c
+	@mkdir -p $(dir $@)
+	$(CC) $(LEGACY_CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
+
 $(RTU_MASTER_TEST): Tests/host/test_modbus_rtu_master.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 $(RTU_MASTER_TRANSACTION_TEST): Tests/host/test_modbus_rtu_master_transaction.c $(CORE_SOURCES)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
+
+$(RTU_DIAGNOSTICS_TEST): Tests/host/test_modbus_rtu_diagnostics.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
@@ -106,8 +121,11 @@ test: all
 	$(CRC_TEST)
 	$(PDU_TEST)
 	$(RTU_TEST)
+	@$(RTU_LEGACY_LINK_TEST) >/dev/null
+	@printf '%s\n' 'modbus RTU legacy source-list test: PASS'
 	$(RTU_MASTER_TEST)
 	$(RTU_MASTER_TRANSACTION_TEST)
+	$(RTU_DIAGNOSTICS_TEST)
 	$(RTU_TIMING_TEST)
 	$(PROTOCOL_TEST)
 	$(SELFTEST)
@@ -133,6 +151,10 @@ stm32-help:
 	  '  App/src/modbus.c App/src/modbus_protocol.c App/src/modbus_tcp.c App/src/platform_stm32.c' \
 	  'For the RTU ADU and bare-metal byte/timing layer, also add:' \
 	  '  App/src/modbus_crc16.c App/src/modbus_rtu.c' \
+  'To enable FC07/FC08/FC0B/FC0C diagnostics, also add:' \
+  '  App/src/modbus_rtu_diagnostics.c' \
+  'and define:' \
+  '  MBRTU_ENABLE_DIAGNOSTICS=1' \
 	  'and include path:' \
 	  '  App/include' \
 	  'See README.md and Examples/stm32_cube_main.c for the exact calls.'

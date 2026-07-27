@@ -17,6 +17,10 @@ extern "C" {
 #define MBRTUM_FC_READ_INPUT_REGISTERS             0x04u
 #define MBRTUM_FC_WRITE_SINGLE_COIL                0x05u
 #define MBRTUM_FC_WRITE_SINGLE_REGISTER            0x06u
+#define MBRTUM_FC_READ_EXCEPTION_STATUS             MBRTU_FC_READ_EXCEPTION_STATUS
+#define MBRTUM_FC_DIAGNOSTICS                       MBRTU_FC_DIAGNOSTICS
+#define MBRTUM_FC_GET_COMM_EVENT_COUNTER            MBRTU_FC_GET_COMM_EVENT_COUNTER
+#define MBRTUM_FC_GET_COMM_EVENT_LOG                MBRTU_FC_GET_COMM_EVENT_LOG
 #define MBRTUM_FC_WRITE_MULTIPLE_COILS             0x0Fu
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
 
@@ -27,6 +31,7 @@ extern "C" {
 #define MBRTUM_EXCEPTION_SERVER_FAILURE            0x04u
 #define MBRTUM_EXCEPTION_ACKNOWLEDGE                0x05u
 #define MBRTUM_EXCEPTION_SERVER_BUSY                0x06u
+#define MBRTUM_EXCEPTION_NEGATIVE_ACKNOWLEDGE       0x07u
 #define MBRTUM_EXCEPTION_MEMORY_PARITY_ERROR        0x08u
 #define MBRTUM_EXCEPTION_GATEWAY_PATH_UNAVAILABLE  0x0Au
 #define MBRTUM_EXCEPTION_GATEWAY_TARGET_FAILED     0x0Bu
@@ -50,6 +55,7 @@ extern "C" {
 #define MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH      (-12)
 #define MBRTUM_ERROR_RESPONSE_NOT_EXPECTED         (-13)
 #define MBRTUM_ERROR_INDEX                         (-14)
+#define MBRTUM_ERROR_REQUEST_DATA_REQUIRED         (-15)
 
 /**
  * Description of one generated Modbus RTU master request.
@@ -58,9 +64,12 @@ extern "C" {
  * remain unchanged until the corresponding response has been validated.
  *
  * value contains the encoded FC05 coil value (0xFF00 or 0x0000) or the FC06
- * register value. It is zero for other function codes.
+ * register value. For FC08, start_address stores the subfunction and quantity
+ * stores the diagnostic data length in bytes. These fields remain zero for
+ * FC07, FC0B, and FC0C.
  *
- * expects_response is zero only for valid broadcast write requests.
+ * expects_response is zero for valid broadcast writes and for requests such
+ * as FC08 Force Listen Only Mode that intentionally have no response.
  */
 typedef struct {
     uint8_t slave_address;
@@ -91,6 +100,22 @@ typedef struct {
     const uint8_t *data;
     size_t data_length;
 } mbrtum_response_t;
+
+/** Decoded zero-copy FC08 response view. */
+typedef struct {
+    uint16_t subfunction;
+    const uint8_t *data;
+    size_t data_length;
+} mbrtum_diagnostics_response_t;
+
+/** Decoded FC0C response view. */
+typedef struct {
+    uint16_t communication_status;
+    uint16_t event_count;
+    uint16_t message_count;
+    const uint8_t *events;
+    size_t events_length;
+} mbrtum_comm_event_log_t;
 
 /**
  * Storage and overlap requirements.
@@ -205,6 +230,63 @@ int mbrtum_build_write_multiple_registers_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC07 Read Exception Status request.
+ */
+int mbrtum_build_read_exception_status_request(
+    uint8_t slave_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
+ * Build an FC08 Diagnostics request.
+ *
+ * diagnostic_data_length must be even and no larger than 250 bytes. Read-only
+ * subfunctions require a unicast address. Broadcast is accepted only for the
+ * state-changing subfunctions 0001, 0004, 000A, and 0014.
+ */
+int mbrtum_build_diagnostics_request(
+    uint8_t slave_address,
+    uint16_t subfunction,
+    const uint8_t *diagnostic_data,
+    size_t diagnostic_data_length,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/** Build an FC0B Get Communication Event Counter request. */
+int mbrtum_build_get_comm_event_counter_request(
+    uint8_t slave_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/** Build an FC0C Get Communication Event Log request. */
+int mbrtum_build_get_comm_event_log_request(
+    uint8_t slave_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
+ * Validate a response while also supplying the original request ADU.
+ *
+ * This form is required for FC08 so echoed diagnostic data can be compared
+ * byte-for-byte. It also supports all ordinary requests and FC07/FC0B/FC0C.
+ */
+int mbrtum_process_response_with_request_adu(
+    const mbrtum_request_t *request,
+    const uint8_t *request_adu,
+    size_t request_adu_length,
+    const uint8_t *response_adu,
+    size_t response_adu_length,
+    mbrtum_response_t *response);
+
+/**
  * Validate and decode exactly one complete Modbus RTU response ADU.
  *
  * The response is checked against the original request descriptor:
@@ -245,6 +327,34 @@ int mbrtum_get_register(const mbrtum_request_t *request,
                         const mbrtum_response_t *response,
                         uint16_t index,
                         uint16_t *value);
+
+/** Decode a validated FC07 status byte. */
+int mbrtum_get_exception_status(const mbrtum_response_t *response,
+                                uint8_t *status);
+
+/** Decode a validated FC08 reply into a zero-copy view. */
+int mbrtum_get_diagnostics_response(
+    const mbrtum_response_t *response,
+    mbrtum_diagnostics_response_t *diagnostics_response);
+
+/** Decode the subfunction and first response word of a validated FC08 reply. */
+int mbrtum_get_diagnostics_word(const mbrtum_response_t *response,
+                                uint16_t *subfunction,
+                                uint16_t *value);
+
+/** Decode a validated FC0B response. */
+int mbrtum_get_comm_event_counter(const mbrtum_response_t *response,
+                                  uint16_t *communication_status,
+                                  uint16_t *event_count);
+
+/** Decode a validated FC0C response into a zero-copy view. */
+int mbrtum_get_comm_event_log(const mbrtum_response_t *response,
+                              mbrtum_comm_event_log_t *event_log);
+
+/** Read one newest-first event byte from a decoded FC0C view. */
+int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
+                                size_t index,
+                                uint8_t *event);
 
 #ifdef __cplusplus
 }

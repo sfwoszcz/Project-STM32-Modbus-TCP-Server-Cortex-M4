@@ -4,7 +4,7 @@
 
 # STM32 Modbus TCP Server for Cortex‑M4
 
-A compact Modbus implementation written in portable C11, with an STM32/lwIP raw-API TCP transport, host-tested Modbus RTU slave and master ADU cores, a portable RTU master transaction engine with deterministic timeouts and retries, a deterministic in-memory register map, strict request validation, and no heap allocation in the request path.
+A compact Modbus implementation written in portable C11, with an STM32/lwIP raw-API TCP transport, host-tested Modbus RTU slave and master ADU cores, serial-line-only RTU diagnostics, a portable RTU master transaction engine with deterministic timeouts and retries, a deterministic in-memory register map, strict request validation, and no heap allocation in the request path.
 
 The repository builds and tests on a normal Linux/macOS development machine. The RTU slave layer validates complete frames, provides single-byte receive and fixed 50 microsecond timing entry points, detects T1.5/T3.5 boundaries, and reuses the same PDU engine as TCP. The separate RTU master core builds complete requests and validates complete responses without depending on hardware. The portable master transaction engine adds one-outstanding-request state management, response deadlines, retry delays, transport-completion/error events, broadcast completion, and bounded diagnostics. UART receive framing, board-specific UART/timer glue, RS-485 direction control, and CubeMX integration remain separate.
 
@@ -24,6 +24,7 @@ make test
 - host tests for the Modbus RTU ADU wrapper, addressing, CRC, and broadcasts
 - host tests for RTU master request builders, response validation, exceptions, and decoding
 - host tests for RTU master transaction state, deadlines, retries, transport events, broadcast handling, and diagnostics
+- dedicated FC07/FC08/FC0B/FC0C slave, master, event-log, policy, listen-only, transaction, and TCP-rejection tests
 - fake-timer tests for T1.5/T3.5, buffering, overflow, recovery, and transmit dispatch
 - C unit tests for the register map and Modbus TCP ADU wrapper
 - the on-device register self-test as a host executable
@@ -42,8 +43,8 @@ The design separates the shared PDU engine from transport framing and network I/
 
 - `mb_process_pdu()` dispatches function codes and creates normal or exception response PDUs without TCP-specific framing.
 - `mbtcp_process_adu()` validates MBAP fields, invokes the shared PDU API, and builds the Modbus TCP response ADU.
-- `mbrtu_process_adu()` validates the RTU address and CRC, applies broadcast rules, invokes the same PDU API, and builds the RTU response ADU.
-- `mbrtum_build_*_request()` creates complete RTU master requests, while `mbrtum_process_response()` validates matching complete responses and Modbus exceptions.
+- `mbrtu_process_adu()` preserves the ordinary-function RTU path, while `mbrtu_process_adu_with_diagnostics()` adds a separate RTU-only dispatcher for FC07, FC08, FC0B, and FC0C.
+- `mbrtum_build_*_request()` creates complete RTU master requests; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
 - `mbrtum_transaction_*()` owns one active request, drives asynchronous transmit/wait/retry states, enforces wrap-safe deadlines, reuses the complete-frame master validator, and exposes bounded diagnostics.
 - `mbrtu_on_rx_byte_isr()` and `mbrtu_on_50us_tick_isr()` assemble frames with minimal interrupt work; `mbrtu_poll()` processes and transmits them from the main loop.
 - `mb_crc16()` implements the Modbus serial-line CRC-16 with low-byte-first wire order.
@@ -53,18 +54,22 @@ The design separates the shared PDU engine from transport framing and network I/
 
 ## Supported function codes
 
-| Function | Code | Maximum per request | Access |
+| Function | Code | Maximum per request | Transport |
 |---|---:|---:|---|
-| Read Coils | `0x01` | 2,000 bits | Read |
-| Read Discrete Inputs | `0x02` | 2,000 bits | Read |
-| Read Holding Registers | `0x03` | 125 registers | Read |
-| Read Input Registers | `0x04` | 125 registers | Read |
-| Write Single Coil | `0x05` | 1 bit | Write |
-| Write Single Register | `0x06` | 1 register | Write |
-| Write Multiple Coils | `0x0F` | 1,968 bits | Write |
-| Write Multiple Registers | `0x10` | 123 registers | Write |
+| Read Coils | `0x01` | 2,000 bits | TCP and RTU |
+| Read Discrete Inputs | `0x02` | 2,000 bits | TCP and RTU |
+| Read Holding Registers | `0x03` | 125 registers | TCP and RTU |
+| Read Input Registers | `0x04` | 125 registers | TCP and RTU |
+| Write Single Coil | `0x05` | 1 bit | TCP and RTU |
+| Write Single Register | `0x06` | 1 register | TCP and RTU |
+| Read Exception Status | `0x07` | 1 status byte | RTU only |
+| Diagnostics | `0x08` | Up to 250 data bytes | RTU only |
+| Get Communication Event Counter | `0x0B` | Fixed response | RTU only |
+| Get Communication Event Log | `0x0C` | 64 event bytes | RTU only |
+| Write Multiple Coils | `0x0F` | 1,968 bits | TCP and RTU |
+| Write Multiple Registers | `0x10` | 123 registers | TCP and RTU |
 
-Illegal functions, addresses, quantities, byte counts, and values produce standard Modbus exception responses.
+Illegal functions, addresses, quantities, byte counts, and values produce standard Modbus exception responses. Serial-line-only diagnostics are deliberately absent from the Modbus TCP dispatcher and return Illegal Function over TCP.
 
 ## Repository layout
 
@@ -76,6 +81,8 @@ App/
 │   ├── modbus_protocol.h     Backward-compatible Modbus TCP ADU API
 │   ├── modbus_crc16.h        Portable Modbus serial CRC-16 API
 │   ├── modbus_rtu.h          RTU ADU plus byte/timing server API
+│   ├── modbus_rtu_diagnostics.h
+│   │                          Fixed-capacity serial diagnostics API
 │   ├── modbus_rtu_master.h   Complete-frame RTU master API
 │   ├── modbus_rtu_master_transaction.h
 │   │                          Portable master timeout/retry transaction API
@@ -86,6 +93,8 @@ App/
     ├── modbus_protocol.c     Shared PDU engine and TCP ADU wrapper
     ├── modbus_crc16.c        Table-free Modbus CRC-16 implementation
     ├── modbus_rtu.c          RTU ADU and bare-metal timing state machine
+    ├── modbus_rtu_diagnostics.c
+    │                          FC07/FC08/FC0B/FC0C RTU-only state and dispatch
     ├── modbus_rtu_master.c   Complete-frame RTU master core
     ├── modbus_rtu_master_transaction.c
     │                          Portable master transaction state machine
@@ -106,6 +115,7 @@ docs/
 ├── modbus-rtu-core.md
 ├── modbus-rtu-master-core.md
 ├── modbus-rtu-master-transaction.md
+├── modbus-rtu-diagnostics.md
 ├── modbus-rtu-timing.md
 └── stm32f767-rtu-validation.md
 ```
@@ -126,8 +136,10 @@ Expected result:
 modbus CRC-16 tests: PASS
 modbus PDU tests: PASS
 modbus RTU ADU tests: PASS
+modbus RTU legacy source-list test: PASS
 modbus RTU master tests: PASS
 modbus RTU master transaction tests: PASS
+modbus RTU diagnostics tests: PASS
 modbus RTU timing tests: PASS
 modbus protocol tests: PASS
 Modbus SelfTest: total=5, passed=5, failed=0, first_err=0
@@ -178,7 +190,8 @@ An RTU request buffer has this layout:
 slave address | function and data PDU | CRC low | CRC high
 ```
 
-Include the RTU and CRC sources with the shared register/PDU sources:
+Include the ordinary RTU and CRC sources with the shared register/PDU
+sources:
 
 ```text
 App/src/modbus.c
@@ -186,6 +199,12 @@ App/src/modbus_protocol.c
 App/src/modbus_crc16.c
 App/src/modbus_rtu.c
 ```
+
+This pre-diagnostics source list remains compile- and link-compatible. To enable
+the serial diagnostics slave path, also add
+`App/src/modbus_rtu_diagnostics.c` and define
+`MBRTU_ENABLE_DIAGNOSTICS=1` for `modbus_rtu.c` and the diagnostics source.
+The repository Make and CMake builds set this definition automatically.
 
 Example complete-frame processing:
 
@@ -215,6 +234,22 @@ Behavior:
 - broadcast reads, frames for another slave, invalid CRC frames, and invalid RTU lengths are silently ignored
 - normal and exception responses include a newly generated low-byte-first CRC
 - no dynamic allocation is used
+
+### Portable RTU diagnostics
+
+Compile with `MBRTU_ENABLE_DIAGNOSTICS=1`, link
+`App/src/modbus_rtu_diagnostics.c`, and attach a caller-owned
+`mbrtu_diagnostics_t` with `mbrtu_process_adu_with_diagnostics()` or
+`mbrtu_init_with_diagnostics()` to enable FC07, FC08, FC0B, and FC0C. The state
+uses saturating 16-bit counters and a deterministic 64-byte newest-first event
+log. State-changing FC08 operations are denied unless an application policy
+callback explicitly approves them.
+
+Listen-only and restart requests set portable pending-action flags; STM32 UART
+restart, watchdog handling, and RS-485 direction control remain application
+responsibilities. See
+[`docs/modbus-rtu-diagnostics.md`](docs/modbus-rtu-diagnostics.md) for the
+complete API, counter rules, broadcast behavior, master builders, and tests.
 
 ### Portable RTU master request and response core
 
@@ -288,12 +323,22 @@ App/src/modbus_tcp.c
 App/src/platform_stm32.c
 ```
 
-For the host-tested RTU ADU core, also add:
+For the host-tested ordinary RTU ADU core, also add:
 
 ```text
 App/src/modbus_crc16.c
 App/src/modbus_rtu.c
 ```
+
+To enable the RTU diagnostics slave path, additionally add:
+
+```text
+App/src/modbus_rtu_diagnostics.c
+```
+
+and define `MBRTU_ENABLE_DIAGNOSTICS=1` in the active compiler configuration.
+Without that definition, the original RTU source list retains ordinary-function
+behavior and does not require the diagnostics source.
 
 The portable receive/timing state machine is included. The STM32 UART interrupt, timer/SysTick setup, and HAL time-base preservation remain board-specific.
 

@@ -2,6 +2,7 @@
 #define MODBUS_RTU_H
 
 #include "modbus_pdu.h"
+#include "modbus_rtu_diagnostics.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -56,6 +57,24 @@ int mbrtu_process_adu(uint8_t slave_address,
                       uint8_t *response_adu,
                       size_t response_capacity,
                       size_t *response_adu_len);
+
+/**
+ * Extended complete-frame RTU processing with serial-only diagnostics.
+ *
+ * The original mbrtu_process_adu() remains unchanged and processes ordinary
+ * function codes only. Pass a caller-owned diagnostics state here to enable
+ * FC07, FC08, FC0B, and FC0C exclusively on the RTU path.
+ */
+int mbrtu_process_adu_with_diagnostics(
+    uint8_t slave_address,
+    const uint8_t *request_adu,
+    size_t request_adu_len,
+    uint8_t *response_adu,
+    size_t response_capacity,
+    size_t *response_adu_len,
+    mbrtu_diagnostics_t *diagnostics,
+    mbrtu_diagnostics_policy_fn diagnostics_policy,
+    void *diagnostics_policy_context);
 
 typedef struct {
     uint32_t character_ticks;
@@ -159,10 +178,28 @@ typedef struct {
     volatile uint32_t responses_sent;
     volatile uint32_t processing_errors;
     volatile uint32_t transmit_errors;
+
+    mbrtu_diagnostics_t *diagnostics;
+    mbrtu_diagnostics_policy_fn diagnostics_policy;
+    void *diagnostics_policy_context;
 } mbrtu_context_t;
 
 /** Initialize the portable byte/timing RTU server layer. */
 int mbrtu_init(mbrtu_context_t *ctx, const mbrtu_config_t *config);
+
+/**
+ * Initialize the RTU server layer and attach serial-only diagnostics state.
+ *
+ * diagnostics must remain valid for the context lifetime. A NULL policy denies
+ * every state-changing FC08 subfunction while still allowing read-only
+ * diagnostics.
+ */
+int mbrtu_init_with_diagnostics(
+    mbrtu_context_t *ctx,
+    const mbrtu_config_t *config,
+    mbrtu_diagnostics_t *diagnostics,
+    mbrtu_diagnostics_policy_fn diagnostics_policy,
+    void *diagnostics_policy_context);
 
 /**
  * Store one completed UART byte. Call from the receive-complete ISR/callback.
