@@ -1,6 +1,6 @@
 # Verification report
 
-Verification performed on 2026-07-19.
+Verification performed on 2026-07-27.
 
 External STM32F767 hardware evidence updated on 2026-07-21.
 
@@ -17,11 +17,12 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus RTU ADU tests | Pass |
 | Modbus RTU master request/response tests | Pass |
 | Modbus RTU master transaction-state tests | Pass |
+| Modbus RTU diagnostics tests | Pass |
 | Modbus RTU 50 us timing/state tests | Pass |
 | Modbus TCP ADU regression tests | Pass |
 | POSIX TCP integration smoke test | Pass |
 | lwIP transport compile check | Pass |
-| CMake configure/build/CTest (8 tests) | Pass |
+| CMake configure/build/CTest (10 tests) | Pass |
 | SVG XML validation and PNG rendering | Pass |
 
 The strict warning set is:
@@ -69,6 +70,33 @@ The host RTU master suite verifies:
 - zero-copy bit and register decoding with index validation
 - malformed response and API argument rejection
 
+## RTU diagnostics coverage
+
+The dedicated diagnostics suite verifies:
+
+- FC07 exception-status responses and exact request-length rejection
+- diagnostics opt-in behavior of the legacy complete-frame RTU API
+- compile/link/run coverage for the pre-diagnostics RTU source list without the diagnostics source or enable definition
+- byte/timing-layer diagnostics dispatch and addressed-overrun accounting
+- FC08 Return Query Data with even-length byte-for-byte echo validation
+- diagnostic-register and all communications-counter response formats
+- unsupported-subfunction and malformed-data exception handling
+- policy denial and approval for restart, listen-only, counter clear, and overrun clear
+- listen-only suppression of ordinary requests
+- Restart Communications Option as the only listen-only exit
+- pending portable restart and listen-only action flags
+- broadcast suppression for read-only diagnostics
+- policy-guarded broadcast state-changing diagnostics
+- counter reset behavior and deterministic 16-bit saturation
+- newest-first 64-byte event-log storage and oldest-event eviction
+- FC0B status/event counter responses
+- FC0C byte count, status, event count, message count, and event bytes
+- master builders for FC07, FC08, FC0B, and FC0C
+- strict FC08 request-ADU-aware response matching
+- zero-copy diagnostics response decoders
+- RTU master transaction-engine support
+- explicit Modbus TCP Illegal Function responses for FC07, FC08, FC0B, and FC0C
+
 ## RTU master transaction coverage
 
 The host transaction suite verifies:
@@ -91,13 +119,13 @@ The host transaction suite verifies:
 
 ## Scope
 
-The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
+The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics subsystem, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
 
 The portable RTU byte-receive/timing state machine, fixed 50 microsecond tick API, T1.5/T3.5 frame detection, buffering, and recovery are host verified. The STM32 UART/timer adapter and physical hardware validation remain outside this stage.
 
 A final STM32 firmware ELF/BIN/HEX cannot be produced without board-specific STM32CubeMX output for the selected MCU and board, including startup code, linker script, HAL/CMSIS, Ethernet MAC/PHY configuration, UART configuration, and generated lwIP port files.
 
-Integration and current RTU scope are documented in `README.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
+Integration and current RTU scope are documented in `README.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-diagnostics.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
 
 The transaction engine is host verified and integrated into the STM32F767 TTL-UART example as a selectable eight-function candidate. The updated project was externally rebuilt with ArmClang 6.22 with zero errors and zero warnings. FC01, FC02, FC03, and FC04 are externally hardware validated. FC05, FC06, FC0F, and FC10 remain host verified with external hardware validation pending because the available slave software could not execute the write requests.
 

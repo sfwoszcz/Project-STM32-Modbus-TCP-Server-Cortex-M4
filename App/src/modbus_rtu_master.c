@@ -29,10 +29,7 @@ static void clear_request(mbrtum_request_t *request)
 static void clear_response(mbrtum_response_t *response)
 {
     if (response != NULL) {
-        response->function = 0u;
-        response->exception_code = 0u;
-        response->data = NULL;
-        response->data_length = 0u;
+        memset(response, 0, sizeof(*response));
     }
 }
 
@@ -402,6 +399,188 @@ int mbrtum_build_write_multiple_registers_request(
     return MBRTUM_OK;
 }
 
+
+static int diagnostic_subfunction_is_state_changing(uint16_t subfunction)
+{
+    return subfunction == MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS ||
+           subfunction == MBRTU_DIAG_SUB_FORCE_LISTEN_ONLY ||
+           subfunction == MBRTU_DIAG_SUB_CLEAR_COUNTERS_AND_REGISTER ||
+           subfunction == MBRTU_DIAG_SUB_CLEAR_OVERRUN_COUNTER;
+}
+
+static int diagnostic_subfunction_is_supported(uint16_t subfunction)
+{
+    switch (subfunction) {
+    case MBRTU_DIAG_SUB_RETURN_QUERY_DATA:
+    case MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS:
+    case MBRTU_DIAG_SUB_RETURN_DIAGNOSTIC_REGISTER:
+    case MBRTU_DIAG_SUB_FORCE_LISTEN_ONLY:
+    case MBRTU_DIAG_SUB_CLEAR_COUNTERS_AND_REGISTER:
+    case MBRTU_DIAG_SUB_RETURN_BUS_MESSAGE_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_BUS_COMM_ERROR_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_BUS_EXCEPTION_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_MESSAGE_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_NO_RESPONSE_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_NAK_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_SERVER_BUSY_COUNT:
+    case MBRTU_DIAG_SUB_RETURN_BUS_OVERRUN_COUNT:
+    case MBRTU_DIAG_SUB_CLEAR_OVERRUN_COUNTER:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int build_function_only_request(uint8_t slave_address,
+                                       uint8_t function,
+                                       mbrtum_request_t *request,
+                                       uint8_t *request_adu,
+                                       size_t request_adu_capacity,
+                                       size_t *request_adu_length)
+{
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+    if (request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (request_adu_capacity < MODBUS_RTU_ADU_MIN_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = function;
+    *request_adu_length = append_crc(request_adu, 2u);
+    finish_request(request, slave_address, function, 0u, 0u, 0u);
+    return MBRTUM_OK;
+}
+
+int mbrtum_build_read_exception_status_request(
+    uint8_t slave_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    return build_function_only_request(slave_address,
+                                       MBRTUM_FC_READ_EXCEPTION_STATUS,
+                                       request,
+                                       request_adu,
+                                       request_adu_capacity,
+                                       request_adu_length);
+}
+
+int mbrtum_build_get_comm_event_counter_request(
+    uint8_t slave_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    return build_function_only_request(slave_address,
+                                       MBRTUM_FC_GET_COMM_EVENT_COUNTER,
+                                       request,
+                                       request_adu,
+                                       request_adu_capacity,
+                                       request_adu_length);
+}
+
+int mbrtum_build_get_comm_event_log_request(
+    uint8_t slave_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    return build_function_only_request(slave_address,
+                                       MBRTUM_FC_GET_COMM_EVENT_LOG,
+                                       request,
+                                       request_adu,
+                                       request_adu_capacity,
+                                       request_adu_length);
+}
+
+int mbrtum_build_diagnostics_request(
+    uint8_t slave_address,
+    uint16_t subfunction,
+    const uint8_t *diagnostic_data,
+    size_t diagnostic_data_length,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    size_t length_without_crc;
+    uint16_t data_word = 0u;
+
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+    if (request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!diagnostic_subfunction_is_supported(subfunction)) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+    if (diagnostic_data_length > 250u ||
+        (diagnostic_data_length % 2u) != 0u ||
+        (diagnostic_data_length != 0u && diagnostic_data == NULL)) {
+        return MBRTUM_ERROR_VALUE;
+    }
+    if (slave_address == MODBUS_RTU_BROADCAST_ADDRESS) {
+        if (!diagnostic_subfunction_is_state_changing(subfunction)) {
+            return MBRTUM_ERROR_SLAVE_ADDRESS;
+        }
+    } else if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+
+    if (subfunction != MBRTU_DIAG_SUB_RETURN_QUERY_DATA) {
+        if (diagnostic_data_length != 2u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        data_word = read_be16(diagnostic_data);
+        if (subfunction == MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS) {
+            if (data_word != 0x0000u && data_word != 0xFF00u) {
+                return MBRTUM_ERROR_VALUE;
+            }
+        } else if (data_word != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+    }
+
+    length_without_crc = 4u + diagnostic_data_length;
+    if (request_adu_capacity <
+        length_without_crc + MODBUS_RTU_CRC_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_DIAGNOSTICS;
+    write_be16(&request_adu[2], subfunction);
+    if (diagnostic_data_length != 0u) {
+        memcpy(&request_adu[4], diagnostic_data, diagnostic_data_length);
+    }
+    *request_adu_length = append_crc(request_adu, length_without_crc);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_DIAGNOSTICS,
+                   subfunction,
+                   (uint16_t)diagnostic_data_length,
+                   0u);
+    request->expects_response = (uint8_t)(
+        slave_address != MODBUS_RTU_BROADCAST_ADDRESS &&
+        subfunction != MBRTU_DIAG_SUB_FORCE_LISTEN_ONLY);
+    return MBRTUM_OK;
+}
+
 static int validate_request_descriptor(const mbrtum_request_t *request)
 {
     if (request->expects_response == 0u) {
@@ -452,6 +631,27 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             return MBRTUM_ERROR_QUANTITY;
         }
         break;
+    case MBRTUM_FC_READ_EXCEPTION_STATUS:
+    case MBRTUM_FC_GET_COMM_EVENT_COUNTER:
+    case MBRTUM_FC_GET_COMM_EVENT_LOG:
+        if (request->start_address != 0u || request->quantity != 0u ||
+            request->value != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
+    case MBRTUM_FC_DIAGNOSTICS:
+        if (!diagnostic_subfunction_is_supported(request->start_address) ||
+            request->quantity > 250u ||
+            (request->quantity % 2u) != 0u || request->value != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        if (request->start_address == MBRTU_DIAG_SUB_RETURN_QUERY_DATA) {
+            break;
+        }
+        if (request->quantity != 2u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
     default:
         return MBRTUM_ERROR_FUNCTION;
     }
@@ -459,10 +659,47 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
     return MBRTUM_OK;
 }
 
-int mbrtum_process_response(const mbrtum_request_t *request,
-                            const uint8_t *response_adu,
-                            size_t response_adu_length,
-                            mbrtum_response_t *response)
+static int original_request_adu_is_valid(
+    const mbrtum_request_t *request,
+    const uint8_t *request_adu,
+    size_t request_adu_length)
+{
+    if (request_adu == NULL ||
+        request_adu_length < MODBUS_RTU_ADU_MIN_SIZE ||
+        request_adu_length > MODBUS_RTU_ADU_MAX_SIZE ||
+        mb_crc16(request_adu, request_adu_length) != 0u ||
+        request_adu[0] != request->slave_address ||
+        request_adu[1] != request->function) {
+        return 0;
+    }
+
+    if (request->function == MBRTUM_FC_DIAGNOSTICS) {
+        uint16_t request_data = 0u;
+
+        if (request_adu_length != 6u + (size_t)request->quantity ||
+            read_be16(&request_adu[2]) != request->start_address) {
+            return 0;
+        }
+        if (request->start_address == MBRTU_DIAG_SUB_RETURN_QUERY_DATA) {
+            return 1;
+        }
+        request_data = read_be16(&request_adu[4]);
+        if (request->start_address ==
+            MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS) {
+            return request_data == 0x0000u || request_data == 0xFF00u;
+        }
+        return request_data == 0u;
+    }
+    return 1;
+}
+
+int mbrtum_process_response_with_request_adu(
+    const mbrtum_request_t *request,
+    const uint8_t *request_adu,
+    size_t request_adu_length,
+    const uint8_t *response_adu,
+    size_t response_adu_length,
+    mbrtum_response_t *response)
 {
     uint8_t response_function;
     uint8_t exception_function;
@@ -476,6 +713,12 @@ int mbrtum_process_response(const mbrtum_request_t *request,
     request_result = validate_request_descriptor(request);
     if (request_result != MBRTUM_OK) {
         return request_result;
+    }
+    if (request->function == MBRTUM_FC_DIAGNOSTICS &&
+        !original_request_adu_is_valid(request,
+                                       request_adu,
+                                       request_adu_length)) {
+        return MBRTUM_ERROR_REQUEST_DATA_REQUIRED;
     }
     if (response_adu_length < MBRTUM_EXCEPTION_ADU_SIZE ||
         response_adu_length > MODBUS_RTU_ADU_MAX_SIZE) {
@@ -569,9 +812,114 @@ int mbrtum_process_response(const mbrtum_request_t *request,
         response->function = request->function;
         return MBRTUM_OK;
 
+    case MBRTUM_FC_READ_EXCEPTION_STATUS:
+        if (response_adu_length != 5u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        response->function = request->function;
+        response->data = &response_adu[2];
+        response->data_length = 1u;
+        return MBRTUM_OK;
+
+    case MBRTUM_FC_DIAGNOSTICS: {
+        uint16_t response_subfunction;
+
+        if (response_adu_length < 6u ||
+            ((response_adu_length - 6u) % 2u) != 0u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        response_subfunction = read_be16(&response_adu[2]);
+        if (response_subfunction != request->start_address) {
+            return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+        }
+
+        if (request->start_address ==
+            MBRTU_DIAG_SUB_RETURN_QUERY_DATA) {
+            if (response_adu_length != request_adu_length ||
+                memcmp(response_adu,
+                       request_adu,
+                       request_adu_length) != 0) {
+                return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+            }
+        } else if (response_adu_length != 8u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        } else if (request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_DIAGNOSTIC_REGISTER &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_BUS_MESSAGE_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_BUS_COMM_ERROR_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_BUS_EXCEPTION_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_SERVER_MESSAGE_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_SERVER_NO_RESPONSE_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_SERVER_NAK_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_SERVER_BUSY_COUNT &&
+                   request->start_address !=
+                       MBRTU_DIAG_SUB_RETURN_BUS_OVERRUN_COUNT &&
+                   memcmp(&response_adu[4],
+                          &request_adu[4],
+                          2u) != 0) {
+            return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+        }
+
+        response->function = request->function;
+        response->data = &response_adu[2];
+        response->data_length = response_adu_length - 4u;
+        return MBRTUM_OK;
+    }
+
+    case MBRTUM_FC_GET_COMM_EVENT_COUNTER:
+        if (response_adu_length != 8u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        response->function = request->function;
+        response->data = &response_adu[2];
+        response->data_length = 4u;
+        return MBRTUM_OK;
+
+    case MBRTUM_FC_GET_COMM_EVENT_LOG: {
+        size_t byte_count;
+        size_t expected_length;
+
+        if (response_adu_length < 11u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        byte_count = response_adu[2];
+        if (byte_count < 6u || byte_count > 70u) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        expected_length = 5u + byte_count;
+        if (response_adu_length != expected_length) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+
+        response->function = request->function;
+        response->data = &response_adu[3];
+        response->data_length = byte_count;
+        return MBRTUM_OK;
+    }
+
     default:
         return MBRTUM_ERROR_FUNCTION;
     }
+}
+
+int mbrtum_process_response(const mbrtum_request_t *request,
+                            const uint8_t *response_adu,
+                            size_t response_adu_length,
+                            mbrtum_response_t *response)
+{
+    return mbrtum_process_response_with_request_adu(request,
+                                                     NULL,
+                                                     0u,
+                                                     response_adu,
+                                                     response_adu_length,
+                                                     response);
 }
 
 int mbrtum_get_bit(const mbrtum_request_t *request,
@@ -633,5 +981,114 @@ int mbrtum_get_register(const mbrtum_request_t *request,
     }
 
     *value = read_be16(&response->data[byte_index]);
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_exception_status(const mbrtum_response_t *response,
+                                uint8_t *status)
+{
+    if (response == NULL || status == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (response->function != MBRTUM_FC_READ_EXCEPTION_STATUS ||
+        response->exception_code != 0u || response->data == NULL ||
+        response->data_length != 1u) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+    *status = response->data[0];
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_diagnostics_response(
+    const mbrtum_response_t *response,
+    mbrtum_diagnostics_response_t *diagnostics_response)
+{
+    if (response == NULL || diagnostics_response == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (response->function != MBRTUM_FC_DIAGNOSTICS ||
+        response->exception_code != 0u || response->data == NULL ||
+        response->data_length < 2u ||
+        (response->data_length % 2u) != 0u) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+    diagnostics_response->subfunction = read_be16(response->data);
+    diagnostics_response->data = &response->data[2];
+    diagnostics_response->data_length = response->data_length - 2u;
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_diagnostics_word(const mbrtum_response_t *response,
+                                uint16_t *subfunction,
+                                uint16_t *value)
+{
+    mbrtum_diagnostics_response_t diagnostics_response;
+    int result;
+
+    if (subfunction == NULL || value == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    result = mbrtum_get_diagnostics_response(response,
+                                              &diagnostics_response);
+    if (result != MBRTUM_OK) {
+        return result;
+    }
+    if (diagnostics_response.data_length < 2u) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+    *subfunction = diagnostics_response.subfunction;
+    *value = read_be16(diagnostics_response.data);
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_comm_event_counter(const mbrtum_response_t *response,
+                                  uint16_t *communication_status,
+                                  uint16_t *event_count)
+{
+    if (response == NULL || communication_status == NULL ||
+        event_count == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (response->function != MBRTUM_FC_GET_COMM_EVENT_COUNTER ||
+        response->exception_code != 0u || response->data == NULL ||
+        response->data_length != 4u) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+    *communication_status = read_be16(response->data);
+    *event_count = read_be16(&response->data[2]);
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_comm_event_log(const mbrtum_response_t *response,
+                              mbrtum_comm_event_log_t *event_log)
+{
+    if (response == NULL || event_log == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (response->function != MBRTUM_FC_GET_COMM_EVENT_LOG ||
+        response->exception_code != 0u || response->data == NULL ||
+        response->data_length < 6u ||
+        response->data_length > 70u) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+    event_log->communication_status = read_be16(response->data);
+    event_log->event_count = read_be16(&response->data[2]);
+    event_log->message_count = read_be16(&response->data[4]);
+    event_log->events = &response->data[6];
+    event_log->events_length = response->data_length - 6u;
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
+                                size_t index,
+                                uint8_t *event)
+{
+    if (event_log == NULL || event == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (event_log->events == NULL || index >= event_log->events_length) {
+        return MBRTUM_ERROR_INDEX;
+    }
+    *event = event_log->events[index];
     return MBRTUM_OK;
 }

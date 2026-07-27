@@ -2,6 +2,117 @@
 
 #include "modbus_crc16.h"
 #include "modbus_pdu.h"
+#include "modbus_rtu_diagnostics.h"
+
+#ifndef MBRTU_ENABLE_DIAGNOSTICS
+#define MBRTU_ENABLE_DIAGNOSTICS 0
+#endif
+
+#if MBRTU_ENABLE_DIAGNOSTICS == 0
+/*
+ * Keep the pre-diagnostics RTU source list link-compatible. Repository builds
+ * define MBRTU_ENABLE_DIAGNOSTICS=1 and link modbus_rtu_diagnostics.c. Legacy
+ * integrations that compile only modbus_rtu.c retain ordinary RTU behavior
+ * without unresolved diagnostics symbols.
+ */
+static void diagnostics_disabled_note_communication_error(
+    mbrtu_diagnostics_t *diagnostics,
+    uint8_t broadcast,
+    uint8_t character_overrun)
+{
+    (void)diagnostics;
+    (void)broadcast;
+    (void)character_overrun;
+}
+
+static void diagnostics_disabled_note_character_overrun(
+    mbrtu_diagnostics_t *diagnostics,
+    uint8_t broadcast,
+    uint8_t addressed_to_server)
+{
+    (void)diagnostics;
+    (void)broadcast;
+    (void)addressed_to_server;
+}
+
+static void diagnostics_disabled_note_bus_message(
+    mbrtu_diagnostics_t *diagnostics,
+    uint8_t broadcast)
+{
+    (void)diagnostics;
+    (void)broadcast;
+}
+
+static void diagnostics_disabled_note_server_message(
+    mbrtu_diagnostics_t *diagnostics)
+{
+    (void)diagnostics;
+}
+
+static void diagnostics_disabled_note_normal_completion(
+    mbrtu_diagnostics_t *diagnostics,
+    uint8_t no_response,
+    uint8_t exclude_from_event_counter)
+{
+    (void)diagnostics;
+    (void)no_response;
+    (void)exclude_from_event_counter;
+}
+
+static void diagnostics_disabled_note_exception(
+    mbrtu_diagnostics_t *diagnostics,
+    uint8_t exception_code)
+{
+    (void)diagnostics;
+    (void)exception_code;
+}
+
+static int diagnostics_disabled_is_listen_only(
+    const mbrtu_diagnostics_t *diagnostics)
+{
+    (void)diagnostics;
+    return 0;
+}
+
+static int diagnostics_disabled_process_pdu(
+    mbrtu_diagnostics_t *diagnostics,
+    mbrtu_diagnostics_policy_fn policy,
+    void *policy_context,
+    uint8_t request_address,
+    const uint8_t *request_pdu,
+    size_t request_pdu_len,
+    uint8_t *response_pdu,
+    size_t response_capacity,
+    size_t *response_pdu_len)
+{
+    (void)diagnostics;
+    (void)policy;
+    (void)policy_context;
+    (void)request_address;
+    (void)request_pdu;
+    (void)request_pdu_len;
+    (void)response_pdu;
+    (void)response_capacity;
+    if (response_pdu_len != NULL) {
+        *response_pdu_len = 0u;
+    }
+    return MBRTU_DIAGNOSTICS_PDU_NOT_HANDLED;
+}
+
+#define mbrtu_diagnostics_note_communication_error \
+    diagnostics_disabled_note_communication_error
+#define mbrtu_diagnostics_note_character_overrun \
+    diagnostics_disabled_note_character_overrun
+#define mbrtu_diagnostics_note_bus_message \
+    diagnostics_disabled_note_bus_message
+#define mbrtu_diagnostics_note_server_message \
+    diagnostics_disabled_note_server_message
+#define mbrtu_diagnostics_note_normal_completion \
+    diagnostics_disabled_note_normal_completion
+#define mbrtu_diagnostics_note_exception diagnostics_disabled_note_exception
+#define mbrtu_diagnostics_is_listen_only diagnostics_disabled_is_listen_only
+#define mbrtu_diagnostics_process_pdu diagnostics_disabled_process_pdu
+#endif
 
 static uint16_t read_crc_le(const uint8_t *p)
 {
@@ -20,14 +131,28 @@ static int is_supported_write_function(uint8_t function)
            function == 0x0Fu || function == 0x10u;
 }
 
-int mbrtu_process_adu(uint8_t slave_address,
-                      const uint8_t *request_adu,
-                      size_t request_adu_len,
-                      uint8_t *response_adu,
-                      size_t response_capacity,
-                      size_t *response_adu_len)
+static uint8_t response_exception_code(const uint8_t *response_pdu,
+                                       size_t response_pdu_len)
+{
+    if (response_pdu_len == 2u && (response_pdu[0] & 0x80u) != 0u) {
+        return response_pdu[1];
+    }
+    return 0u;
+}
+
+int mbrtu_process_adu_with_diagnostics(
+    uint8_t slave_address,
+    const uint8_t *request_adu,
+    size_t request_adu_len,
+    uint8_t *response_adu,
+    size_t response_capacity,
+    size_t *response_adu_len,
+    mbrtu_diagnostics_t *diagnostics,
+    mbrtu_diagnostics_policy_fn diagnostics_policy,
+    void *diagnostics_policy_context)
 {
     uint8_t request_address;
+    uint8_t broadcast;
     size_t request_pdu_len;
     uint16_t received_crc;
     uint16_t calculated_crc;
@@ -48,23 +173,120 @@ int mbrtu_process_adu(uint8_t slave_address,
 
     if (request_adu_len < MODBUS_RTU_ADU_MIN_SIZE ||
         request_adu_len > MODBUS_RTU_ADU_MAX_SIZE) {
+        if (diagnostics != NULL && request_adu_len > 0u) {
+            mbrtu_diagnostics_note_communication_error(
+                diagnostics,
+                (uint8_t)(request_adu[0] == MODBUS_RTU_BROADCAST_ADDRESS),
+                0u);
+        }
         return MBRTU_NO_RESPONSE;
     }
 
     request_address = request_adu[0];
-    if (request_address != MODBUS_RTU_BROADCAST_ADDRESS &&
-        request_address != slave_address) {
-        return MBRTU_NO_RESPONSE;
-    }
+    broadcast = (uint8_t)(
+        request_address == MODBUS_RTU_BROADCAST_ADDRESS ? 1u : 0u);
 
     received_crc = read_crc_le(&request_adu[request_adu_len - MODBUS_RTU_CRC_SIZE]);
     calculated_crc = mb_crc16(request_adu,
                               request_adu_len - MODBUS_RTU_CRC_SIZE);
     if (received_crc != calculated_crc) {
+        mbrtu_diagnostics_note_communication_error(diagnostics,
+                                                    broadcast,
+                                                    0u);
+        return MBRTU_NO_RESPONSE;
+    }
+
+    mbrtu_diagnostics_note_bus_message(diagnostics, broadcast);
+
+    if (request_address != MODBUS_RTU_BROADCAST_ADDRESS &&
+        request_address != slave_address) {
         return MBRTU_NO_RESPONSE;
     }
 
     request_pdu_len = request_adu_len - 1u - MODBUS_RTU_CRC_SIZE;
+    mbrtu_diagnostics_note_server_message(diagnostics);
+
+    if (diagnostics != NULL &&
+        mbrtu_diagnostics_is_listen_only(diagnostics) &&
+        !(request_pdu_len >= 5u &&
+          request_adu[1] == MBRTU_FC_DIAGNOSTICS &&
+          request_adu[2] == 0x00u &&
+          request_adu[3] ==
+              (uint8_t)MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS)) {
+        mbrtu_diagnostics_note_normal_completion(
+            diagnostics,
+            (uint8_t)(broadcast == 0u ? 1u : 0u),
+            1u);
+        return MBRTU_NO_RESPONSE;
+    }
+
+    if (diagnostics != NULL) {
+        uint8_t *diagnostic_response =
+            response_capacity > 1u ? &response_adu[1] : response_adu;
+        size_t diagnostic_response_capacity =
+            response_capacity > 1u + MODBUS_RTU_CRC_SIZE
+                ? response_capacity - 1u - MODBUS_RTU_CRC_SIZE
+                : 0u;
+        size_t diagnostic_response_len = 0u;
+        int diagnostic_result;
+
+        diagnostic_result = mbrtu_diagnostics_process_pdu(
+            diagnostics,
+            diagnostics_policy,
+            diagnostics_policy_context,
+            request_address,
+            &request_adu[1],
+            request_pdu_len,
+            diagnostic_response,
+            diagnostic_response_capacity,
+            &diagnostic_response_len);
+
+        if (diagnostic_result == MBRTU_DIAGNOSTICS_PDU_RESPONSE) {
+            uint8_t exception_code;
+
+            if (response_capacity <
+                1u + diagnostic_response_len + MODBUS_RTU_CRC_SIZE) {
+                return MBRTU_ERROR_RESPONSE_CAPACITY;
+            }
+            response_adu[0] = request_address;
+            calculated_crc = mb_crc16(response_adu,
+                                      1u + diagnostic_response_len);
+            write_crc_le(&response_adu[1u + diagnostic_response_len],
+                         calculated_crc);
+            *response_adu_len =
+                1u + diagnostic_response_len + MODBUS_RTU_CRC_SIZE;
+
+            exception_code = response_exception_code(&response_adu[1],
+                                                     diagnostic_response_len);
+            if (exception_code != 0u) {
+                mbrtu_diagnostics_note_exception(diagnostics,
+                                                 exception_code);
+            } else if (!(request_adu[1] == MBRTU_FC_DIAGNOSTICS &&
+                         request_pdu_len >= 3u &&
+                         request_adu[2] == 0x00u &&
+                         (request_adu[3] ==
+                              (uint8_t)MBRTU_DIAG_SUB_RESTART_COMMUNICATIONS ||
+                          request_adu[3] ==
+                              (uint8_t)MBRTU_DIAG_SUB_CLEAR_COUNTERS_AND_REGISTER))) {
+                mbrtu_diagnostics_note_normal_completion(
+                    diagnostics,
+                    0u,
+                    (uint8_t)(request_adu[1] ==
+                                  MBRTU_FC_GET_COMM_EVENT_COUNTER ||
+                              request_adu[1] ==
+                                  MBRTU_FC_GET_COMM_EVENT_LOG));
+            }
+            return MBRTU_RESPONSE_READY;
+        }
+
+        if (diagnostic_result == MBRTU_DIAGNOSTICS_PDU_NO_RESPONSE) {
+            return MBRTU_NO_RESPONSE;
+        }
+
+        if (diagnostic_result == MBRTU_DIAGNOSTICS_PDU_ERROR) {
+            return MBRTU_ERROR_PDU;
+        }
+    }
 
     if (request_address == MODBUS_RTU_BROADCAST_ADDRESS) {
         uint8_t discarded_response[5];
@@ -72,6 +294,7 @@ int mbrtu_process_adu(uint8_t slave_address,
         int pdu_result;
 
         if (!is_supported_write_function(request_adu[1])) {
+            mbrtu_diagnostics_note_normal_completion(diagnostics, 0u, 1u);
             return MBRTU_NO_RESPONSE;
         }
 
@@ -83,6 +306,12 @@ int mbrtu_process_adu(uint8_t slave_address,
         if (pdu_result < 0) {
             return MBRTU_ERROR_PDU;
         }
+        if (response_exception_code(discarded_response,
+                                    discarded_response_len) != 0u) {
+            mbrtu_diagnostics_note_normal_completion(diagnostics, 0u, 1u);
+        } else {
+            mbrtu_diagnostics_note_normal_completion(diagnostics, 0u, 0u);
+        }
         return MBRTU_NO_RESPONSE;
     }
 
@@ -93,6 +322,7 @@ int mbrtu_process_adu(uint8_t slave_address,
     {
         size_t response_pdu_len = 0u;
         size_t response_without_crc_len;
+        uint8_t exception_code;
         int pdu_result;
 
         pdu_result = mb_process_pdu(&request_adu[1],
@@ -109,9 +339,35 @@ int mbrtu_process_adu(uint8_t slave_address,
         calculated_crc = mb_crc16(response_adu, response_without_crc_len);
         write_crc_le(&response_adu[response_without_crc_len], calculated_crc);
         *response_adu_len = response_without_crc_len + MODBUS_RTU_CRC_SIZE;
+
+        exception_code = response_exception_code(&response_adu[1],
+                                                 response_pdu_len);
+        if (exception_code != 0u) {
+            mbrtu_diagnostics_note_exception(diagnostics, exception_code);
+        } else {
+            mbrtu_diagnostics_note_normal_completion(diagnostics, 0u, 0u);
+        }
     }
 
     return MBRTU_RESPONSE_READY;
+}
+
+int mbrtu_process_adu(uint8_t slave_address,
+                      const uint8_t *request_adu,
+                      size_t request_adu_len,
+                      uint8_t *response_adu,
+                      size_t response_capacity,
+                      size_t *response_adu_len)
+{
+    return mbrtu_process_adu_with_diagnostics(slave_address,
+                                               request_adu,
+                                               request_adu_len,
+                                               response_adu,
+                                               response_capacity,
+                                               response_adu_len,
+                                               NULL,
+                                               NULL,
+                                               NULL);
 }
 
 static uint32_t ceil_div_u64(uint64_t numerator, uint64_t denominator)
@@ -287,7 +543,35 @@ int mbrtu_init(mbrtu_context_t *ctx, const mbrtu_config_t *config)
     ctx->processing_errors = 0u;
     ctx->transmit_errors = 0u;
 
+    ctx->diagnostics = NULL;
+    ctx->diagnostics_policy = NULL;
+    ctx->diagnostics_policy_context = NULL;
+
     ctx->initialized = 1u;
+    return 0;
+}
+
+int mbrtu_init_with_diagnostics(
+    mbrtu_context_t *ctx,
+    const mbrtu_config_t *config,
+    mbrtu_diagnostics_t *diagnostics,
+    mbrtu_diagnostics_policy_fn diagnostics_policy,
+    void *diagnostics_policy_context)
+{
+    int result;
+
+    if (diagnostics == NULL) {
+        return MBRTU_ERROR_ARGUMENT;
+    }
+
+    result = mbrtu_init(ctx, config);
+    if (result != 0) {
+        return result;
+    }
+
+    ctx->diagnostics = diagnostics;
+    ctx->diagnostics_policy = diagnostics_policy;
+    ctx->diagnostics_policy_context = diagnostics_policy_context;
     return 0;
 }
 
@@ -372,16 +656,35 @@ int mbrtu_poll(mbrtu_context_t *ctx)
     overflow = ctx->pending_overflow;
 
     if (invalid_gap != 0u || overflow != 0u) {
+        uint8_t broadcast = (uint8_t)(
+            request_length > 0u &&
+            request[0] == MODBUS_RTU_BROADCAST_ADDRESS);
+
+        if (overflow != 0u) {
+            mbrtu_diagnostics_note_character_overrun(
+                ctx->diagnostics,
+                broadcast,
+                (uint8_t)(request_length > 0u &&
+                          request[0] == ctx->slave_address));
+        } else {
+            mbrtu_diagnostics_note_communication_error(ctx->diagnostics,
+                                                       broadcast,
+                                                       0u);
+        }
         ctx->pending_ready = 0u;
         return MBRTU_POLL_FRAME_DROPPED;
     }
 
-    process_result = mbrtu_process_adu(ctx->slave_address,
-                                       request,
-                                       request_length,
-                                       ctx->response_buffer,
-                                       ctx->response_buffer_capacity,
-                                       &response_length);
+    process_result = mbrtu_process_adu_with_diagnostics(
+        ctx->slave_address,
+        request,
+        request_length,
+        ctx->response_buffer,
+        ctx->response_buffer_capacity,
+        &response_length,
+        ctx->diagnostics,
+        ctx->diagnostics_policy,
+        ctx->diagnostics_policy_context);
 
     /* The request buffer is no longer needed after complete-frame processing. */
     ctx->pending_ready = 0u;

@@ -7,6 +7,7 @@ stm32-modbus-tcp-server/
 │   │   ├── modbus_protocol.h
 │   │   ├── modbus_crc16.h
 │   │   ├── modbus_rtu.h
+│   │   ├── modbus_rtu_diagnostics.h
 │   │   ├── modbus_rtu_master.h
 │   │   ├── modbus_rtu_master_transaction.h
 │   │   ├── modbus_tcp.h
@@ -16,6 +17,7 @@ stm32-modbus-tcp-server/
 │       ├── modbus_protocol.c
 │       ├── modbus_crc16.c
 │       ├── modbus_rtu.c
+│       ├── modbus_rtu_diagnostics.c
 │       ├── modbus_rtu_master.c
 │       ├── modbus_rtu_master_transaction.c
 │       ├── modbus_tcp.c
@@ -33,6 +35,7 @@ stm32-modbus-tcp-server/
 │   ├── modbus-rtu-core.md
 │   ├── modbus-rtu-master-core.md
 │   ├── modbus-rtu-master-transaction.md
+│   ├── modbus-rtu-diagnostics.md
 │   ├── modbus-rtu-timing.md
 │   └── stm32f767-rtu-validation.md
 ├── tools/
