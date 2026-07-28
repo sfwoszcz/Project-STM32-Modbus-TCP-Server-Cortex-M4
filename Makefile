@@ -4,8 +4,8 @@ PYTHON ?= python3
 BUILD ?= build
 
 CPPFLAGS ?= -IApp/include -ITests/stm32
-CPPFLAGS += -DMBRTU_ENABLE_DIAGNOSTICS=1
-LEGACY_CPPFLAGS := $(filter-out -DMBRTU_ENABLE_DIAGNOSTICS=1,$(CPPFLAGS))
+CPPFLAGS += -DMBRTU_ENABLE_DIAGNOSTICS=1 -DMBRTU_ENABLE_SERVER_ID=1
+LEGACY_CPPFLAGS := $(filter-out -DMBRTU_ENABLE_DIAGNOSTICS=1 -DMBRTU_ENABLE_SERVER_ID=1,$(CPPFLAGS))
 CFLAGS ?= -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Werror
 LDFLAGS ?=
 
@@ -15,6 +15,7 @@ CORE_SOURCES := \
   App/src/modbus_crc16.c \
   App/src/modbus_rtu.c \
   App/src/modbus_rtu_diagnostics.c \
+  App/src/modbus_rtu_server_id.c \
   App/src/modbus_rtu_master.c \
   App/src/modbus_rtu_master_transaction.c
 CORE_OBJECTS := $(CORE_SOURCES:%.c=$(BUILD)/%.o)
@@ -26,6 +27,7 @@ RTU_LEGACY_LINK_TEST := $(BUILD)/modbus_rtu_legacy_link_tests
 RTU_MASTER_TEST := $(BUILD)/modbus_rtu_master_tests
 RTU_MASTER_TRANSACTION_TEST := $(BUILD)/modbus_rtu_master_transaction_tests
 RTU_DIAGNOSTICS_TEST := $(BUILD)/modbus_rtu_diagnostics_tests
+FC11_TEST := $(BUILD)/modbus_fc11_tests
 FC23_TEST := $(BUILD)/modbus_fc23_tests
 FC43_DEVICE_ID_TEST := $(BUILD)/modbus_fc43_device_id_tests
 FC20_TEST := $(BUILD)/modbus_fc20_tests
@@ -45,7 +47,7 @@ all: library demo compile-check unit-tests
 help:
 	@printf '%s\n' \
 	  'make              Build the portable library, tests, demo server, and lwIP compile checks' \
-	  'make test         Run CRC, PDU, RTU slave/master/diagnostics/FC20/FC21/FC23/FC43 tests, TCP, register, and socket tests' \
+	  'make test         Run CRC, PDU, RTU slave/master/diagnostics/FC11/FC20/FC21/FC23/FC43 tests, TCP, register, and socket tests' \
 	  'make ci           Clean and run the complete verification suite' \
 	  'make stm32-help   Show CubeMX integration instructions' \
 	  'make clean        Remove generated build files'
@@ -57,7 +59,7 @@ demo: $(POSIX_SERVER)
 compile-check: $(LWIP_CHECK_OBJECTS)
 
 unit-tests: $(CRC_TEST) $(PDU_TEST) $(RTU_TEST) $(RTU_LEGACY_LINK_TEST) $(RTU_MASTER_TEST) \
-	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_DIAGNOSTICS_TEST) $(FC23_TEST) \
+	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_DIAGNOSTICS_TEST) $(FC11_TEST) $(FC23_TEST) \
 	$(FC43_DEVICE_ID_TEST) $(FC20_TEST) $(FC21_TEST) $(RTU_TIMING_TEST) $(PROTOCOL_TEST) $(SELFTEST)
 
 $(BUILD)/%.o: %.c
@@ -95,6 +97,10 @@ $(RTU_MASTER_TRANSACTION_TEST): Tests/host/test_modbus_rtu_master_transaction.c 
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 $(RTU_DIAGNOSTICS_TEST): Tests/host/test_modbus_rtu_diagnostics.c $(CORE_SOURCES)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
+
+$(FC11_TEST): Tests/host/test_modbus_fc11.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
@@ -147,6 +153,7 @@ test: all
 	$(RTU_MASTER_TEST)
 	$(RTU_MASTER_TRANSACTION_TEST)
 	$(RTU_DIAGNOSTICS_TEST)
+	$(FC11_TEST)
 	$(FC23_TEST)
 	$(FC43_DEVICE_ID_TEST)
 	$(FC20_TEST)
@@ -180,6 +187,10 @@ stm32-help:
   '  App/src/modbus_rtu_diagnostics.c' \
   'and define:' \
   '  MBRTU_ENABLE_DIAGNOSTICS=1' \
+  'For FC11 Report Server ID, also add:' \
+  '  App/src/modbus_rtu_server_id.c' \
+  'and define:' \
+  '  MBRTU_ENABLE_SERVER_ID=1' \
 	  'and include path:' \
 	  '  App/include' \
 	  'See README.md and Examples/stm32_cube_main.c for the exact calls.'

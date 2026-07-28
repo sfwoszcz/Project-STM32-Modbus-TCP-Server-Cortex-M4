@@ -49,6 +49,15 @@ A request whose descriptor says that no response is expected completes after
 transmit completion and never starts a response deadline. Broadcast writes, including FC21, use this behavior; the transaction layer does not hard-code a
 specific function code.
 
+## FC11 support
+
+The transaction engine accepts FC11 requests produced by
+`mbrtum_build_report_server_id_request()`. Before transmission it validates the
+unicast address, function-only four-byte ADU, device-specific expected Server
+ID length, zero-valued unused descriptor fields, response expectation, and
+CRC. Normal, exception, malformed, unrelated, timeout, and retry handling reuse
+the existing state machine.
+
 ## FC20 support
 
 The transaction engine accepts FC20 requests produced by

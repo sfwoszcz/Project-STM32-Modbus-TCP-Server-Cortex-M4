@@ -13,7 +13,7 @@ ADU, and exposes zero-copy helpers for decoded bit and register data.
 Implemented now:
 
 - request generation for function codes `01`, `02`, `03`, `04`, `05`, `06`,
-  `0F`, `10`, `14`, `15`, `17`, and `2B/0E`
+  `0F`, `10`, `11`, `14`, `15`, `17`, and `2B/0E`
 - Modbus CRC-16 generation in low-byte-first RTU wire order
 - unicast slave addresses from 1 through 247
 - broadcast writes at address 0
@@ -83,6 +83,7 @@ validation.
 | `06` | Write Single Holding Register | one register | echoed address and value |
 | `0F` | Write Multiple Coils | 1 to 1968 coils | echoed address and quantity |
 | `10` | Write Multiple Holding Registers | 1 to 123 registers | echoed address and quantity |
+| `11` | Report Server ID | function-only unicast request | ID, run status, additional data |
 | `14` | Read File Record | 35 subrequests; combined response data <= 245 bytes | file subresponses |
 | `15` | Write File Record | 27 subrequests; request data <= 251 bytes | exact request echo |
 | `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
@@ -256,6 +257,17 @@ The FC0F builder clears unused high bits in the final request byte.
 For FC01 and FC02 responses, the validator rejects a frame when unused high
 bits in the final packed byte are nonzero. This strict check prevents malformed
 packed-bit data from being accepted.
+
+## FC11 requests
+
+`mbrtum_build_report_server_id_request()` builds the four-byte function-only
+RTU request and stores the application-supplied, device-specific expected
+Server ID length in the request descriptor. `mbrtum_process_response()`
+validates the response CRC, address, function, byte count, exact length,
+maximum size, and the `0x00`/`0xFF` Run Indicator Status at the expected byte
+offset. `mbrtum_get_server_id_response()` exposes zero-copy views of the
+variable-length Server ID and optional Additional Data. See
+[`modbus-fc11-report-server-id.md`](modbus-fc11-report-server-id.md).
 
 ## FC20 requests
 

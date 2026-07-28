@@ -818,6 +818,38 @@ int mbrtum_build_get_comm_event_log_request(
                                        request_adu_length);
 }
 
+int mbrtum_build_report_server_id_request(
+    uint8_t slave_address,
+    uint16_t expected_server_id_length,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    int result;
+
+    if (expected_server_id_length == 0u ||
+        expected_server_id_length >
+            MBRTU_SERVER_ID_MAX_SERVER_ID_LENGTH) {
+        if (request_adu_length != NULL) {
+            *request_adu_length = 0u;
+        }
+        clear_request(request);
+        return MBRTUM_ERROR_QUANTITY;
+    }
+
+    result = build_function_only_request(slave_address,
+                                         MBRTUM_FC_REPORT_SERVER_ID,
+                                         request,
+                                         request_adu,
+                                         request_adu_capacity,
+                                         request_adu_length);
+    if (result == MBRTUM_OK) {
+        request->quantity = expected_server_id_length;
+    }
+    return result;
+}
+
 int mbrtum_build_diagnostics_request(
     uint8_t slave_address,
     uint16_t subfunction,
@@ -986,6 +1018,16 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
     case MBRTUM_FC_GET_COMM_EVENT_LOG:
         if (request->start_address != 0u || request->quantity != 0u ||
             request->value != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
+    case MBRTUM_FC_REPORT_SERVER_ID:
+        if (request->start_address != 0u ||
+            request->quantity == 0u ||
+            request->quantity > MBRTU_SERVER_ID_MAX_SERVER_ID_LENGTH ||
+            request->value != 0u ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u) {
             return MBRTUM_ERROR_VALUE;
         }
         break;
@@ -1400,6 +1442,38 @@ int mbrtum_process_response_with_request_adu(
         return MBRTUM_OK;
     }
 
+    case MBRTUM_FC_REPORT_SERVER_ID: {
+        size_t byte_count;
+        size_t expected_length;
+        size_t run_status_offset;
+
+        if (response_adu_length <
+            6u + (size_t)request->quantity) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        byte_count = response_adu[2];
+        if (byte_count < (size_t)request->quantity + 1u ||
+            byte_count > MBRTU_SERVER_ID_MAX_BYTE_COUNT) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        expected_length = 5u + byte_count;
+        if (response_adu_length != expected_length) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        run_status_offset = 3u + (size_t)request->quantity;
+        if (response_adu[run_status_offset] !=
+                MBRTU_SERVER_ID_RUN_STATUS_OFF &&
+            response_adu[run_status_offset] !=
+                MBRTU_SERVER_ID_RUN_STATUS_ON) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+
+        response->function = request->function;
+        response->data = &response_adu[3];
+        response->data_length = byte_count;
+        return MBRTUM_OK;
+    }
+
     case MBRTUM_FC_READ_DEVICE_IDENTIFICATION: {
         uint8_t read_code;
         uint8_t conformity_level;
@@ -1683,6 +1757,44 @@ int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
         return MBRTUM_ERROR_INDEX;
     }
     *event = event_log->events[index];
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_server_id_response(
+    const mbrtum_request_t *request,
+    const mbrtum_response_t *response,
+    mbrtum_server_id_response_t *server_id_response)
+{
+    size_t server_id_length;
+
+    if (request == NULL || response == NULL ||
+        server_id_response == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    server_id_length = request->quantity;
+    if (request->function != MBRTUM_FC_REPORT_SERVER_ID ||
+        server_id_length == 0u ||
+        server_id_length > MBRTU_SERVER_ID_MAX_SERVER_ID_LENGTH ||
+        response->function != MBRTUM_FC_REPORT_SERVER_ID ||
+        response->exception_code != 0u || response->data == NULL ||
+        response->data_length < server_id_length + 1u ||
+        response->data_length > MBRTU_SERVER_ID_MAX_BYTE_COUNT ||
+        (response->data[server_id_length] !=
+             MBRTU_SERVER_ID_RUN_STATUS_OFF &&
+         response->data[server_id_length] !=
+             MBRTU_SERVER_ID_RUN_STATUS_ON)) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+
+    server_id_response->server_id = response->data;
+    server_id_response->server_id_length = server_id_length;
+    server_id_response->run_status = response->data[server_id_length];
+    server_id_response->additional_data_length =
+        response->data_length - server_id_length - 1u;
+    server_id_response->additional_data =
+        server_id_response->additional_data_length > 0u
+            ? &response->data[server_id_length + 1u]
+            : NULL;
     return MBRTUM_OK;
 }
 
