@@ -25,7 +25,7 @@ Implemented now:
 - zero-valued unused padding validation for packed-bit responses
 - exact single-write address/value acknowledgement validation
 - exact multiple-write address/quantity acknowledgement validation
-- zero-copy bit and register access helpers
+- zero-copy bit, register, and FC43/14 object access helpers
 - strict host tests and integration with Make, CMake, and CTest
 - no dynamic allocation
 
@@ -83,6 +83,7 @@ validation.
 | `0F` | Write Multiple Coils | 1 to 1968 coils | echoed address and quantity |
 | `10` | Write Multiple Holding Registers | 1 to 123 registers | echoed address and quantity |
 | `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
+| `2B/0E` | Read Device Identification | Basic/Regular/Extended/Specific | segmented object list |
 
 The request builders reject an address range whose final item would exceed
 Modbus address `65535`.
@@ -411,7 +412,8 @@ cmake --build build --clean-first
 ctest --test-dir build --output-on-failure
 ```
 
-The CTest suite includes dedicated `rtu_master` and `fc23` tests.
+The CTest suite includes dedicated `rtu_master`, `fc23`, and
+`fc43_device_id` tests.
 
 ## Next stage
 
@@ -428,3 +430,14 @@ transaction engine that owns:
 STM32 UART reception, timer integration, and RS-485 DE/RE direction control
 should remain in board-specific adapters above that portable transaction
 engine.
+
+## FC43/14 Device Identification
+
+`mbrtum_build_read_device_identification_request()` builds the fixed seven-byte
+RTU request ADU for MEI type `0x0E`. The request descriptor stores the Read
+Device ID code in `start_address`, the object ID in `quantity`, and the MEI type
+in `value`. `mbrtum_process_response()` validates conformity, segmentation,
+object boundaries, ordering, category, and Specific Object acknowledgement.
+`mbrtum_get_device_id_response()` and `mbrtum_get_device_id_object()` expose
+bounded zero-copy views into the validated response ADU. See
+`docs/modbus-fc43-device-identification.md`.

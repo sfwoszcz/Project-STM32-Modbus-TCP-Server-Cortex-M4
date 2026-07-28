@@ -123,3 +123,12 @@ See [`modbus-rtu-timing.md`](modbus-rtu-timing.md) for timing calculations, buff
 
 - Modbus Application Protocol Specification V1.1b3: <https://www.modbus.org/file/secure/modbusprotocolspecification.pdf>
 - Modbus Serial Line Protocol and Implementation Guide V1.02: <https://www.modbus.org/file/secure/modbusoverserial.pdf>
+
+## FC43/14 Read Device Identification
+
+FC43/14 is processed by the shared PDU engine and is therefore available to
+both Modbus TCP and unicast Modbus RTU requests. The application configures a
+fixed-capacity object model through `mb_device_id_configure()`. RTU address-zero
+broadcast requests are silently ignored because the function is read-only.
+Object-list pagination, conformity levels, maximum object sizing, and exception
+behavior are documented in `docs/modbus-fc43-device-identification.md`.

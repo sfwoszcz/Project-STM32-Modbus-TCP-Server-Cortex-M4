@@ -3,6 +3,7 @@ stm32-modbus-tcp-server/
 ├── App/
 │   ├── include/
 │   │   ├── modbus.h
+│   │   ├── modbus_device_id.h
 │   │   ├── modbus_pdu.h
 │   │   ├── modbus_protocol.h
 │   │   ├── modbus_crc16.h
@@ -14,6 +15,7 @@ stm32-modbus-tcp-server/
 │   │   └── platform_port.h
 │   └── src/
 │       ├── modbus.c
+│       ├── modbus_device_id_internal.h
 │       ├── modbus_protocol.c
 │       ├── modbus_crc16.c
 │       ├── modbus_rtu.c
@@ -32,6 +34,7 @@ stm32-modbus-tcp-server/
 │   │   ├── register_selftest_runner.c
 │   │   ├── test_modbus_crc16.c
 │   │   ├── test_modbus_fc23.c
+│   │   ├── test_modbus_fc43_device_id.c
 │   │   ├── test_modbus_pdu.c
 │   │   ├── test_modbus_protocol.c
 │   │   ├── test_modbus_rtu.c
@@ -44,6 +47,7 @@ stm32-modbus-tcp-server/
 ├── docs/
 │   ├── images/
 │   ├── modbus-fc23.md
+│   ├── modbus-fc43-device-identification.md
 │   ├── modbus-rtu-core.md
 │   ├── modbus-rtu-master-core.md
 │   ├── modbus-rtu-master-transaction.md

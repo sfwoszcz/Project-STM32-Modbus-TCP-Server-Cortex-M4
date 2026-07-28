@@ -120,6 +120,21 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
             (size_t)adu[10] != expected_byte_count) {
             return 0;
         }
+    } else if (request->function ==
+                   MBRTUM_FC_READ_DEVICE_IDENTIFICATION) {
+        if (request->slave_address == MODBUS_RTU_BROADCAST_ADDRESS ||
+            request->expects_response != 1u ||
+            request->start_address < MB_DEVICE_ID_READ_BASIC ||
+            request->start_address > MB_DEVICE_ID_READ_SPECIFIC ||
+            request->quantity > UINT8_MAX ||
+            request->value != MB_DEVICE_ID_MEI_TYPE ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u || adu_length != 7u ||
+            adu[2] != MB_DEVICE_ID_MEI_TYPE ||
+            adu[3] != (uint8_t)request->start_address ||
+            adu[4] != (uint8_t)request->quantity) {
+            return 0;
+        }
     } else if (request->function == MBRTUM_FC_DIAGNOSTICS) {
         uint16_t request_data = 0u;
         uint8_t expected_response = (uint8_t)(
