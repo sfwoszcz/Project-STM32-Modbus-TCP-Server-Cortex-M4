@@ -26,6 +26,7 @@ RTU_LEGACY_LINK_TEST := $(BUILD)/modbus_rtu_legacy_link_tests
 RTU_MASTER_TEST := $(BUILD)/modbus_rtu_master_tests
 RTU_MASTER_TRANSACTION_TEST := $(BUILD)/modbus_rtu_master_transaction_tests
 RTU_DIAGNOSTICS_TEST := $(BUILD)/modbus_rtu_diagnostics_tests
+FC23_TEST := $(BUILD)/modbus_fc23_tests
 RTU_TIMING_TEST := $(BUILD)/modbus_rtu_timing_tests
 PROTOCOL_TEST := $(BUILD)/modbus_protocol_tests
 SELFTEST := $(BUILD)/register_selftest
@@ -53,7 +54,8 @@ demo: $(POSIX_SERVER)
 compile-check: $(LWIP_CHECK_OBJECTS)
 
 unit-tests: $(CRC_TEST) $(PDU_TEST) $(RTU_TEST) $(RTU_LEGACY_LINK_TEST) $(RTU_MASTER_TEST) \
-	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_DIAGNOSTICS_TEST) $(RTU_TIMING_TEST) $(PROTOCOL_TEST) $(SELFTEST)
+	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_DIAGNOSTICS_TEST) $(FC23_TEST) $(RTU_TIMING_TEST) \
+	$(PROTOCOL_TEST) $(SELFTEST)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -93,6 +95,10 @@ $(RTU_DIAGNOSTICS_TEST): Tests/host/test_modbus_rtu_diagnostics.c $(CORE_SOURCES
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
+$(FC23_TEST): Tests/host/test_modbus_fc23.c $(CORE_SOURCES)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
+
 $(RTU_TIMING_TEST): Tests/host/test_modbus_rtu_timing.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
@@ -126,6 +132,7 @@ test: all
 	$(RTU_MASTER_TEST)
 	$(RTU_MASTER_TRANSACTION_TEST)
 	$(RTU_DIAGNOSTICS_TEST)
+	$(FC23_TEST)
 	$(RTU_TIMING_TEST)
 	$(PROTOCOL_TEST)
 	$(SELFTEST)

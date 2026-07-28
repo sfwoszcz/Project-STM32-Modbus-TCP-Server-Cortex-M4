@@ -12,7 +12,7 @@ Implemented now:
 - configurable unicast slave address from 1 through 247
 - address 0 broadcast handling
 - silent discard of invalid CRC frames and frames for another slave
-- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, and `10`
+- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, and `17`
 - normal and exception response framing
 - host tests for all supported function codes and RTU-specific behavior
 
@@ -76,12 +76,20 @@ For a unicast request addressed to the configured slave:
 
 For a broadcast request at address 0:
 
-- supported write functions are processed
+- supported write-only functions are processed
 - no response is generated
-- read functions and unsupported functions are ignored
+- read functions, FC23, and unsupported functions are ignored
 - malformed writes do not modify the register map
 
 Frames with addresses 248 through 255 are reserved and are not accepted as configured slave addresses.
+
+## FC23 shared processing
+
+FC23 Read/Write Multiple Registers uses the same shared PDU implementation for
+Modbus TCP and RTU unicast requests. The core validates both holding-register
+ranges, quantities, byte count, exact request length, and response capacity
+before changing the map. The write is then performed before the read. See
+[`modbus-fc23.md`](modbus-fc23.md) for the complete contract.
 
 ## CRC-16
 

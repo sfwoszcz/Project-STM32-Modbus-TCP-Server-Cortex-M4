@@ -399,6 +399,69 @@ int mbrtum_build_write_multiple_registers_request(
     return MBRTUM_OK;
 }
 
+int mbrtum_build_read_write_multiple_registers_request(
+    uint8_t slave_address,
+    uint16_t read_start_address,
+    uint16_t read_quantity,
+    uint16_t write_start_address,
+    uint16_t write_quantity,
+    const uint16_t *write_values,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    size_t byte_count;
+    size_t length_without_crc;
+
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (write_values == NULL || request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (read_quantity == 0u || read_quantity > 125u ||
+        !address_range_is_valid(read_start_address, read_quantity) ||
+        write_quantity == 0u || write_quantity > 121u ||
+        !address_range_is_valid(write_start_address, write_quantity)) {
+        return MBRTUM_ERROR_QUANTITY;
+    }
+
+    byte_count = (size_t)write_quantity * 2u;
+    length_without_crc = 11u + byte_count;
+    if (request_adu_capacity < length_without_crc + MODBUS_RTU_CRC_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS;
+    write_be16(&request_adu[2], read_start_address);
+    write_be16(&request_adu[4], read_quantity);
+    write_be16(&request_adu[6], write_start_address);
+    write_be16(&request_adu[8], write_quantity);
+    request_adu[10] = (uint8_t)byte_count;
+    for (uint16_t i = 0u; i < write_quantity; ++i) {
+        write_be16(&request_adu[11u + ((size_t)i * 2u)], write_values[i]);
+    }
+
+    *request_adu_length = append_crc(request_adu, length_without_crc);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS,
+                   read_start_address,
+                   read_quantity,
+                   0u);
+    request->write_start_address = write_start_address;
+    request->write_quantity = write_quantity;
+    return MBRTUM_OK;
+}
+
 
 static int diagnostic_subfunction_is_state_changing(uint16_t subfunction)
 {
@@ -631,6 +694,16 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             return MBRTUM_ERROR_QUANTITY;
         }
         break;
+    case MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS:
+        if (request->quantity == 0u || request->quantity > 125u ||
+            !address_range_is_valid(request->start_address, request->quantity) ||
+            request->write_quantity == 0u || request->write_quantity > 121u ||
+            !address_range_is_valid(request->write_start_address,
+                                    request->write_quantity) ||
+            request->value != 0u) {
+            return MBRTUM_ERROR_QUANTITY;
+        }
+        break;
     case MBRTUM_FC_READ_EXCEPTION_STATUS:
     case MBRTUM_FC_GET_COMM_EVENT_COUNTER:
     case MBRTUM_FC_GET_COMM_EVENT_LOG:
@@ -772,7 +845,8 @@ int mbrtum_process_response_with_request_adu(
     }
 
     case MBRTUM_FC_READ_HOLDING_REGISTERS:
-    case MBRTUM_FC_READ_INPUT_REGISTERS: {
+    case MBRTUM_FC_READ_INPUT_REGISTERS:
+    case MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS: {
         size_t expected_byte_count = (size_t)request->quantity * 2u;
         size_t expected_length = 5u + expected_byte_count;
 
@@ -964,7 +1038,8 @@ int mbrtum_get_register(const mbrtum_request_t *request,
         return MBRTUM_ERROR_ARGUMENT;
     }
     if (request->function != MBRTUM_FC_READ_HOLDING_REGISTERS &&
-        request->function != MBRTUM_FC_READ_INPUT_REGISTERS) {
+        request->function != MBRTUM_FC_READ_INPUT_REGISTERS &&
+        request->function != MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS) {
         return MBRTUM_ERROR_FUNCTION;
     }
     if (response->exception_code != 0u ||

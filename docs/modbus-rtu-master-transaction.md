@@ -50,6 +50,15 @@ transmit completion and never starts a response deadline. Broadcast writes are
 the current use of this behavior; the transaction layer does not hard-code a
 specific function code.
 
+## FC23 support
+
+The transaction engine accepts FC23 requests produced by
+`mbrtum_build_read_write_multiple_registers_request()`. Before transmission it
+checks the read and write ranges, both quantities, exact request length, write
+byte count, response expectation, function, address, and CRC against the
+request descriptor. Response timing, retries, exceptions, and decoding reuse
+the existing state machine.
+
 ## Request validation
 
 Before transmission, the engine checks that:
