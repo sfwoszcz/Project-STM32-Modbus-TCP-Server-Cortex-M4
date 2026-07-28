@@ -19,11 +19,12 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus RTU master transaction-state tests | Pass |
 | Modbus RTU diagnostics tests | Pass |
 | Modbus FC23 shared/RTU/TCP/master tests | Pass |
+| Modbus FC43/14 device-identification tests | Pass |
 | Modbus RTU 50 us timing/state tests | Pass |
 | Modbus TCP ADU regression tests | Pass |
 | POSIX TCP integration smoke test | Pass |
 | lwIP transport compile check | Pass |
-| CMake configure/build/CTest (11 tests) | Pass |
+| CMake configure/build/CTest (12 tests) | Pass |
 | SVG XML validation and PNG rendering | Pass |
 
 The strict warning set is:
@@ -55,9 +56,9 @@ The host RTU suite verifies:
 
 ## RTU master coverage
 
-The host RTU master and dedicated FC23 suites verify:
+The host RTU master plus dedicated FC23 and FC43/14 suites verify:
 
-- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, and FC23 request generation
+- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC23, and FC43/14 request generation
 - low-byte-first request CRC generation
 - unicast requests and broadcast-write behavior
 - quantity, value, capacity, and 16-bit address-range validation
@@ -69,7 +70,7 @@ The host RTU master and dedicated FC23 suites verify:
 - exact single-write address/value acknowledgements
 - exact multiple-write address/quantity acknowledgements
 - exact FC23 response byte-count and length validation
-- zero-copy bit and register decoding with index validation
+- zero-copy bit, register, and device-identification object decoding with index validation
 - malformed response and API argument rejection
 
 ## FC23 coverage
@@ -90,6 +91,29 @@ The dedicated FC23 suite verifies:
 - maximum 255-byte RTU master request ADU
 - exact master response validation and zero-copy register decoding
 - master transaction-engine descriptor/ADU validation and successful completion
+
+## FC43/14 Device Identification coverage
+
+The dedicated FC43/14 suite verifies:
+
+- fixed-capacity configuration and copy-owned object storage
+- mandatory Basic object enforcement and strict object ordering
+- reserved object-ID and conformity/category rejection
+- Basic, Regular, Extended, and Specific Object access
+- fallback to the server's actual lower conformity level
+- unknown stream-object restart at object zero
+- unknown Specific Object Illegal Data Address responses
+- deterministic object-boundary segmentation with More Follows and Next Object ID
+- insufficient response-capacity handling without partial objects
+- exact request length, MEI type, and Read Device ID code validation
+- Modbus TCP and unicast Modbus RTU processing
+- RTU broadcast suppression for the read-only function
+- maximum 253-byte response PDU and 256-byte RTU response ADU
+- RTU master builder fields, capacity, descriptor, and CRC
+- conformity, pagination, ordering, category, and object-boundary response validation
+- bounded zero-copy response and object iteration
+- malformed response rejection
+- RTU master transaction-engine descriptor/ADU validation and completion
 
 ## RTU diagnostics coverage
 
@@ -140,13 +164,13 @@ The host transaction suite verifies:
 
 ## Scope
 
-The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics subsystem, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
+The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics subsystem, fixed-capacity FC43/14 device-identification object model, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
 
 The portable RTU byte-receive/timing state machine, fixed 50 microsecond tick API, T1.5/T3.5 frame detection, buffering, and recovery are host verified. The STM32 UART/timer adapter and physical hardware validation remain outside this stage.
 
 A final STM32 firmware ELF/BIN/HEX cannot be produced without board-specific STM32CubeMX output for the selected MCU and board, including startup code, linker script, HAL/CMSIS, Ethernet MAC/PHY configuration, UART configuration, and generated lwIP port files.
 
-Integration and current RTU scope are documented in `README.md`, `docs/modbus-fc23.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-diagnostics.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
+Integration and current RTU scope are documented in `README.md`, `docs/modbus-fc23.md`, `docs/modbus-fc43-device-identification.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-diagnostics.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
 
 The transaction engine is host verified and integrated into the STM32F767 TTL-UART example as a selectable eight-function candidate. The updated project was externally rebuilt with ArmClang 6.22 with zero errors and zero warnings. FC01, FC02, FC03, and FC04 are externally hardware validated. FC05, FC06, FC0F, and FC10 remain host verified with external hardware validation pending because the available slave software could not execute the write requests.
 

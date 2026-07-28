@@ -2,6 +2,7 @@
 #define MODBUS_RTU_MASTER_H
 
 #include "modbus_rtu.h"
+#include "modbus_device_id.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -24,6 +25,7 @@ extern "C" {
 #define MBRTUM_FC_WRITE_MULTIPLE_COILS             0x0Fu
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
 #define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
+#define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MB_DEVICE_ID_FUNCTION_CODE
 
 /* Common Modbus exception codes returned by a remote slave. */
 #define MBRTUM_EXCEPTION_ILLEGAL_FUNCTION          0x01u
@@ -68,8 +70,9 @@ extern "C" {
  * register value. For FC08, start_address stores the subfunction and quantity
  * stores the diagnostic data length in bytes. For FC23, start_address and
  * quantity describe the read range, while write_start_address and
- * write_quantity describe the write range. These fields remain zero for
- * FC07, FC0B, and FC0C.
+ * write_quantity describe the write range. For FC43/14, start_address stores
+ * the Read Device ID code, quantity stores the requested object ID, and value
+ * stores the MEI type 0x0E. These fields remain zero for FC07, FC0B, and FC0C.
  *
  * expects_response is zero for valid broadcast writes and for requests such
  * as FC08 Force Listen Only Mode that intentionally have no response.
@@ -121,6 +124,24 @@ typedef struct {
     const uint8_t *events;
     size_t events_length;
 } mbrtum_comm_event_log_t;
+
+/** Decoded zero-copy FC43/14 response view. */
+typedef struct {
+    uint8_t read_device_id_code;
+    uint8_t conformity_level;
+    uint8_t more_follows;
+    uint8_t next_object_id;
+    uint8_t object_count;
+    const uint8_t *objects;
+    size_t objects_length;
+} mbrtum_device_id_response_t;
+
+/** One zero-copy object extracted from an FC43/14 response view. */
+typedef struct {
+    uint8_t object_id;
+    const uint8_t *value;
+    size_t value_length;
+} mbrtum_device_id_object_t;
 
 /**
  * Storage and overlap requirements.
@@ -256,6 +277,23 @@ int mbrtum_build_read_write_multiple_registers_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC43/14 Read Device Identification RTU request ADU.
+ *
+ * slave_address must be 1-247. read_device_id_code must be one of Basic,
+ * Regular, Extended, or Specific Object access (0x01-0x04). object_id is the
+ * first object requested for stream access or the exact object requested for
+ * specific access.
+ */
+int mbrtum_build_read_device_identification_request(
+    uint8_t slave_address,
+    uint8_t read_device_id_code,
+    uint8_t object_id,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC07 Read Exception Status request.
  */
 int mbrtum_build_read_exception_status_request(
@@ -383,6 +421,17 @@ int mbrtum_get_comm_event_log(const mbrtum_response_t *response,
 int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
                                 size_t index,
                                 uint8_t *event);
+
+/** Decode a validated FC43/14 response into a zero-copy view. */
+int mbrtum_get_device_id_response(
+    const mbrtum_response_t *response,
+    mbrtum_device_id_response_t *device_id_response);
+
+/** Extract one object by zero-based response index from an FC43/14 view. */
+int mbrtum_get_device_id_object(
+    const mbrtum_device_id_response_t *device_id_response,
+    size_t index,
+    mbrtum_device_id_object_t *object);
 
 #ifdef __cplusplus
 }

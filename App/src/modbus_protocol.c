@@ -3,6 +3,8 @@
 #include "modbus_pdu.h"
 
 #include "modbus.h"
+#include "modbus_device_id.h"
+#include "modbus_device_id_internal.h"
 #include "platform_port.h"
 
 #include <string.h>
@@ -244,6 +246,19 @@ static uint8_t process_pdu_function(const uint8_t *pdu,
         *response_len = 2u + read_byte_count;
         return 0u;
     }
+
+    case MB_DEVICE_ID_FUNCTION_CODE: /* Read Device Identification */
+        if (pdu_len != 4u) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        if (pdu[1] != MB_DEVICE_ID_MEI_TYPE) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        return mb_device_id_process_request(pdu[2],
+                                            pdu[3],
+                                            response,
+                                            response_capacity,
+                                            response_len);
 
     default:
         return MB_EX_ILLEGAL_FUNCTION;

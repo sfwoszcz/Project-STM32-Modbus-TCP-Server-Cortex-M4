@@ -59,6 +59,15 @@ byte count, response expectation, function, address, and CRC against the
 request descriptor. Response timing, retries, exceptions, and decoding reuse
 the existing state machine.
 
+## FC43/14 support
+
+The transaction engine accepts requests produced by
+`mbrtum_build_read_device_identification_request()`. Before transmission it
+checks the exact seven-byte ADU, unicast address, function, MEI type, access
+code, object ID, response expectation, and CRC against the immutable request
+descriptor. Normal, exception, malformed, unrelated, timeout, and retry behavior
+reuse the existing state machine.
+
 ## Request validation
 
 Before transmission, the engine checks that:

@@ -51,6 +51,42 @@ static int address_range_is_valid(uint16_t start_address, uint16_t quantity)
            (uint32_t)start_address + (uint32_t)quantity <= 65536u;
 }
 
+
+static int device_id_code_is_valid(uint16_t read_device_id_code)
+{
+    return read_device_id_code >= MB_DEVICE_ID_READ_BASIC &&
+           read_device_id_code <= MB_DEVICE_ID_READ_SPECIFIC;
+}
+
+static int device_id_conformity_is_valid(uint8_t conformity_level)
+{
+    return conformity_level == MB_DEVICE_ID_CONFORMITY_BASIC_STREAM ||
+           conformity_level == MB_DEVICE_ID_CONFORMITY_REGULAR_STREAM ||
+           conformity_level == MB_DEVICE_ID_CONFORMITY_EXTENDED_STREAM ||
+           conformity_level == MB_DEVICE_ID_CONFORMITY_BASIC_INDIVIDUAL ||
+           conformity_level == MB_DEVICE_ID_CONFORMITY_REGULAR_INDIVIDUAL ||
+           conformity_level == MB_DEVICE_ID_CONFORMITY_EXTENDED_INDIVIDUAL;
+}
+
+static uint8_t device_id_conformity_category(uint8_t conformity_level)
+{
+    return (uint8_t)(conformity_level & 0x7Fu);
+}
+
+static int device_id_object_matches_category(uint8_t object_id,
+                                             uint8_t category)
+{
+    if (category == MB_DEVICE_ID_READ_BASIC) {
+        return object_id <= MB_DEVICE_ID_OBJECT_MAJOR_MINOR_REVISION;
+    }
+    if (category == MB_DEVICE_ID_READ_REGULAR) {
+        return object_id <= MB_DEVICE_ID_OBJECT_USER_APPLICATION_NAME;
+    }
+    return category == MB_DEVICE_ID_READ_EXTENDED &&
+           (object_id <= MB_DEVICE_ID_OBJECT_USER_APPLICATION_NAME ||
+            object_id >= MB_DEVICE_ID_PRIVATE_OBJECT_MIN);
+}
+
 static int packed_bit_padding_is_zero(const uint8_t *data,
                                       size_t data_length,
                                       uint16_t quantity)
@@ -462,6 +498,47 @@ int mbrtum_build_read_write_multiple_registers_request(
     return MBRTUM_OK;
 }
 
+int mbrtum_build_read_device_identification_request(
+    uint8_t slave_address,
+    uint8_t read_device_id_code,
+    uint8_t object_id,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (request == NULL || request_adu == NULL || request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (!device_id_code_is_valid(read_device_id_code)) {
+        return MBRTUM_ERROR_VALUE;
+    }
+    if (request_adu_capacity < 7u) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_READ_DEVICE_IDENTIFICATION;
+    request_adu[2] = MB_DEVICE_ID_MEI_TYPE;
+    request_adu[3] = read_device_id_code;
+    request_adu[4] = object_id;
+    *request_adu_length = append_crc(request_adu, 5u);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_READ_DEVICE_IDENTIFICATION,
+                   read_device_id_code,
+                   object_id,
+                   MB_DEVICE_ID_MEI_TYPE);
+    return MBRTUM_OK;
+}
 
 static int diagnostic_subfunction_is_state_changing(uint16_t subfunction)
 {
@@ -709,6 +786,15 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
     case MBRTUM_FC_GET_COMM_EVENT_LOG:
         if (request->start_address != 0u || request->quantity != 0u ||
             request->value != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
+    case MBRTUM_FC_READ_DEVICE_IDENTIFICATION:
+        if (!device_id_code_is_valid(request->start_address) ||
+            request->quantity > UINT8_MAX ||
+            request->value != MB_DEVICE_ID_MEI_TYPE ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u) {
             return MBRTUM_ERROR_VALUE;
         }
         break;
@@ -978,6 +1064,102 @@ int mbrtum_process_response_with_request_adu(
         return MBRTUM_OK;
     }
 
+    case MBRTUM_FC_READ_DEVICE_IDENTIFICATION: {
+        uint8_t read_code;
+        uint8_t conformity_level;
+        uint8_t more_follows;
+        uint8_t next_object_id;
+        uint8_t object_count;
+        uint8_t category;
+        size_t offset;
+        uint8_t previous_object_id = 0u;
+
+        if (response_adu_length < 12u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        if (response_adu[2] != MB_DEVICE_ID_MEI_TYPE) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        read_code = response_adu[3];
+        conformity_level = response_adu[4];
+        more_follows = response_adu[5];
+        next_object_id = response_adu[6];
+        object_count = response_adu[7];
+
+        if (read_code != (uint8_t)request->start_address ||
+            !device_id_conformity_is_valid(conformity_level) ||
+            (more_follows != 0u && more_follows != 0xFFu) ||
+            object_count == 0u) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        if ((more_follows == 0u && next_object_id != 0u) ||
+            (more_follows == 0xFFu && next_object_id == 0u)) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+
+        category = device_id_conformity_category(conformity_level);
+        if (read_code != MB_DEVICE_ID_READ_SPECIFIC &&
+            read_code < category) {
+            category = read_code;
+        }
+        if (read_code == MB_DEVICE_ID_READ_SPECIFIC) {
+            if ((conformity_level & 0x80u) == 0u || more_follows != 0u ||
+                next_object_id != 0u || object_count != 1u) {
+                return MBRTUM_ERROR_MALFORMED_RESPONSE;
+            }
+        }
+
+        offset = 8u;
+        for (uint8_t i = 0u; i < object_count; ++i) {
+            uint8_t object_id;
+            uint8_t object_length;
+
+            if (offset + 2u > response_adu_length - 2u) {
+                return MBRTUM_ERROR_RESPONSE_LENGTH;
+            }
+            object_id = response_adu[offset];
+            object_length = response_adu[offset + 1u];
+            offset += 2u;
+            if (offset + object_length > response_adu_length - 2u) {
+                return MBRTUM_ERROR_RESPONSE_LENGTH;
+            }
+            if (i > 0u && object_id <= previous_object_id) {
+                return MBRTUM_ERROR_MALFORMED_RESPONSE;
+            }
+            if (read_code == MB_DEVICE_ID_READ_SPECIFIC) {
+                if (!device_id_object_matches_category(object_id, category)) {
+                    return MBRTUM_ERROR_MALFORMED_RESPONSE;
+                }
+                if (object_id != (uint8_t)request->quantity) {
+                    return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+                }
+            } else {
+                if (!device_id_object_matches_category(object_id, category)) {
+                    return MBRTUM_ERROR_MALFORMED_RESPONSE;
+                }
+                if (i == 0u && object_id != 0u &&
+                    object_id != (uint8_t)request->quantity) {
+                    return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+                }
+            }
+            previous_object_id = object_id;
+            offset += object_length;
+        }
+        if (offset != response_adu_length - 2u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        if (more_follows == 0xFFu &&
+            (next_object_id <= previous_object_id ||
+             !device_id_object_matches_category(next_object_id, category))) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+
+        response->function = request->function;
+        response->data = &response_adu[2];
+        response->data_length = response_adu_length - 4u;
+        return MBRTUM_OK;
+    }
+
     default:
         return MBRTUM_ERROR_FUNCTION;
     }
@@ -1166,4 +1348,68 @@ int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
     }
     *event = event_log->events[index];
     return MBRTUM_OK;
+}
+
+int mbrtum_get_device_id_response(
+    const mbrtum_response_t *response,
+    mbrtum_device_id_response_t *device_id_response)
+{
+    if (response == NULL || device_id_response == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    memset(device_id_response, 0, sizeof(*device_id_response));
+    if (response->exception_code != 0u ||
+        response->function != MBRTUM_FC_READ_DEVICE_IDENTIFICATION ||
+        response->data == NULL || response->data_length < 8u ||
+        response->data[0] != MB_DEVICE_ID_MEI_TYPE) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+
+    device_id_response->read_device_id_code = response->data[1];
+    device_id_response->conformity_level = response->data[2];
+    device_id_response->more_follows = response->data[3];
+    device_id_response->next_object_id = response->data[4];
+    device_id_response->object_count = response->data[5];
+    device_id_response->objects = &response->data[6];
+    device_id_response->objects_length = response->data_length - 6u;
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_device_id_object(
+    const mbrtum_device_id_response_t *device_id_response,
+    size_t index,
+    mbrtum_device_id_object_t *object)
+{
+    size_t offset = 0u;
+
+    if (device_id_response == NULL || object == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    memset(object, 0, sizeof(*object));
+    if (device_id_response->objects == NULL ||
+        index >= device_id_response->object_count) {
+        return MBRTUM_ERROR_INDEX;
+    }
+
+    for (size_t i = 0u; i <= index; ++i) {
+        uint8_t object_length;
+
+        if (offset + 2u > device_id_response->objects_length) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        object_length = device_id_response->objects[offset + 1u];
+        if (offset + 2u + object_length >
+            device_id_response->objects_length) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        if (i == index) {
+            object->object_id = device_id_response->objects[offset];
+            object->value = &device_id_response->objects[offset + 2u];
+            object->value_length = object_length;
+            return MBRTUM_OK;
+        }
+        offset += 2u + object_length;
+    }
+
+    return MBRTUM_ERROR_INDEX;
 }
