@@ -4,7 +4,7 @@
 
 # STM32 Modbus TCP Server for Cortex‑M4
 
-A compact Modbus implementation written in portable C11, with an STM32/lwIP raw-API TCP transport, host-tested Modbus RTU slave and master ADU cores, serial-line-only RTU diagnostics, a portable RTU master transaction engine with deterministic timeouts and retries, a deterministic in-memory register map, strict request validation, and no heap allocation in the request path.
+A compact Modbus implementation written in portable C11, with an STM32/lwIP raw-API TCP transport, host-tested Modbus RTU slave and master ADU cores, serial-line-only RTU diagnostics, a portable RTU master transaction engine with deterministic timeouts and retries, a deterministic in-memory register map, fixed-capacity application file records, strict request validation, and no heap allocation in the request path.
 
 The repository builds and tests on a normal Linux/macOS development machine. The RTU slave layer validates complete frames, provides single-byte receive and fixed 50 microsecond timing entry points, detects T1.5/T3.5 boundaries, and reuses the same PDU engine as TCP. The separate RTU master core builds complete requests and validates complete responses without depending on hardware. The portable master transaction engine adds one-outstanding-request state management, response deadlines, retry delays, transport-completion/error events, broadcast completion, and bounded diagnostics. UART receive framing, board-specific UART/timer glue, RS-485 direction control, and CubeMX integration remain separate.
 
@@ -25,7 +25,7 @@ make test
 - host tests for RTU master request builders, response validation, exceptions, and decoding
 - host tests for RTU master transaction state, deadlines, retries, transport events, broadcast handling, and diagnostics
 - dedicated FC07/FC08/FC0B/FC0C slave, master, event-log, policy, listen-only, transaction, and TCP-rejection tests
-- dedicated FC23 and FC43/14 shared-PDU, TCP, RTU, master, transaction, boundary, and malformed-frame tests
+- dedicated FC20, FC23, and FC43/14 shared-PDU, TCP, RTU, master, transaction, boundary, and malformed-frame tests
 - fake-timer tests for T1.5/T3.5, buffering, overflow, recovery, and transmit dispatch
 - C unit tests for the register map and Modbus TCP ADU wrapper
 - the on-device register self-test as a host executable
@@ -42,10 +42,10 @@ A GitHub Actions workflow and a Docker build are included.
 
 The design separates the shared PDU engine from transport framing and network I/O:
 
-- `mb_process_pdu()` dispatches shared function codes, including FC23 Read/Write Multiple Registers and FC43/14 Read Device Identification, and creates normal or exception response PDUs without TCP-specific framing.
+- `mb_process_pdu()` dispatches shared function codes, including FC20 Read File Record, FC23 Read/Write Multiple Registers, and FC43/14 Read Device Identification, and creates normal or exception response PDUs without TCP-specific framing.
 - `mbtcp_process_adu()` validates MBAP fields, invokes the shared PDU API, and builds the Modbus TCP response ADU.
 - `mbrtu_process_adu()` preserves the ordinary-function RTU path, while `mbrtu_process_adu_with_diagnostics()` adds a separate RTU-only dispatcher for FC07, FC08, FC0B, and FC0C.
-- `mbrtum_build_*_request()` creates complete RTU master requests, including FC23 and FC43/14; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
+- `mbrtum_build_*_request()` creates complete RTU master requests, including FC20, FC23, and FC43/14; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
 - `mbrtum_transaction_*()` owns one active request, drives asynchronous transmit/wait/retry states, enforces wrap-safe deadlines, reuses the complete-frame master validator, and exposes bounded diagnostics.
 - `mbrtu_on_rx_byte_isr()` and `mbrtu_on_50us_tick_isr()` assemble frames with minimal interrupt work; `mbrtu_poll()` processes and transmits them from the main loop.
 - `mb_crc16()` implements the Modbus serial-line CRC-16 with low-byte-first wire order.
@@ -69,10 +69,17 @@ The design separates the shared PDU engine from transport framing and network I/
 | Get Communication Event Log | `0x0C` | 64 event bytes | RTU only |
 | Write Multiple Coils | `0x0F` | 1,968 bits | TCP and RTU |
 | Write Multiple Registers | `0x10` | 123 registers | TCP and RTU |
+| Read File Record | `0x14` | 35 subrequests; 245 response-data bytes | TCP and RTU |
 | Read/Write Multiple Registers | `0x17` | Read 125, write 121 registers | TCP and RTU |
 | Read Device Identification | `0x2B / 0x0E` | Segmented object list | TCP and RTU |
 
 Illegal functions, addresses, quantities, byte counts, and values produce standard Modbus exception responses. Serial-line-only diagnostics are deliberately absent from the Modbus TCP dispatcher and return Illegal Function over TCP.
+
+FC20 reads one or more sequential ranges from application-owned file-record
+arrays. The fixed-capacity descriptor map supports sparse file numbers without
+copying or dynamically allocating record storage. See
+[`docs/modbus-fc20-read-file-record.md`](docs/modbus-fc20-read-file-record.md)
+for the storage API, wire format, master validation, and limits.
 
 FC23 performs its write before its read, including when the ranges overlap. The
 shared PDU implementation validates the entire request and normal-response
@@ -93,6 +100,7 @@ App/
 ├── include/
 │   ├── modbus.h              Register-map API and write hooks
 │   ├── modbus_device_id.h    Fixed-capacity FC43/14 object configuration
+│   ├── modbus_file_record.h  Fixed-capacity application file-record map
 │   ├── modbus_pdu.h          Shared transport-independent PDU API
 │   ├── modbus_protocol.h     Backward-compatible Modbus TCP ADU API
 │   ├── modbus_crc16.h        Portable Modbus serial CRC-16 API
@@ -105,9 +113,11 @@ App/
 │   ├── modbus_tcp.h          lwIP server API
 │   └── platform_port.h       Compile-time configuration
 └── src/
-    ├── modbus.c              Coils, registers, and Device ID storage
+    ├── modbus.c              Coils, registers, Device ID, and file-map state
     ├── modbus_device_id_internal.h
     │                          Internal FC43/14 PDU integration helper
+    ├── modbus_file_record_internal.h
+    │                          Internal FC20 PDU integration helper
     ├── modbus_protocol.c     Shared PDU engine and TCP ADU wrapper
     ├── modbus_crc16.c        Table-free Modbus CRC-16 implementation
     ├── modbus_rtu.c          RTU ADU and bare-metal timing state machine
@@ -126,6 +136,7 @@ Examples/
 
 Tests/
 ├── host/                     Unit, transaction, and socket-level tests
+│   ├── test_modbus_fc20.c    Dedicated FC20 file/RTU/TCP/master tests
 │   ├── test_modbus_fc23.c    Dedicated FC23 shared/RTU/TCP/master tests
 │   └── test_modbus_fc43_device_id.c
 │                              Dedicated FC43/14 object and transport tests
@@ -133,6 +144,7 @@ Tests/
 └── stm32/                    Register-map self-test for a target board
 
 docs/
+├── modbus-fc20-read-file-record.md
 ├── modbus-fc23.md
 ├── modbus-fc43-device-identification.md
 ├── modbus-rtu-core.md
@@ -165,6 +177,7 @@ modbus RTU master transaction tests: PASS
 modbus RTU diagnostics tests: PASS
 Modbus FC23 tests: PASS
 Modbus FC43/14 device identification tests: PASS
+Modbus FC20 Read File Record tests: PASS
 modbus RTU timing tests: PASS
 modbus protocol tests: PASS
 Modbus SelfTest: total=5, passed=5, failed=0, first_err=0
@@ -279,9 +292,9 @@ complete API, counter rules, broadcast behavior, master builders, and tests.
 ### Portable RTU master request and response core
 
 The separate master core builds complete FC01, FC02, FC03, FC04, FC05, FC06,
-FC0F, FC10, FC23, and FC43/14 request ADUs and validates one complete response against
+FC0F, FC10, FC20, FC23, and FC43/14 request ADUs and validates one complete response against
 the original request descriptor. It checks CRC, address, function, byte count,
-packed-bit padding, write acknowledgements, FC23 read data, FC43/14 object lists, and Modbus
+packed-bit padding, write acknowledgements, FC20 subresponses, FC23 read data, FC43/14 object lists, and Modbus
 exception responses.
 
 The complete-frame master core intentionally does not own UART framing,

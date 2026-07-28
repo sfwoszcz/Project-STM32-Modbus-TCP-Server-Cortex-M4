@@ -51,6 +51,14 @@ static int address_range_is_valid(uint16_t start_address, uint16_t quantity)
            (uint32_t)start_address + (uint32_t)quantity <= 65536u;
 }
 
+static int file_record_range_is_valid(uint16_t record_number,
+                                      uint16_t record_length)
+{
+    return record_length > 0u &&
+           record_number < MB_FILE_RECORD_MAX_RECORDS_PER_FILE &&
+           (uint32_t)record_number + (uint32_t)record_length <=
+               MB_FILE_RECORD_MAX_RECORDS_PER_FILE;
+}
 
 static int device_id_code_is_valid(uint16_t read_device_id_code)
 {
@@ -498,6 +506,85 @@ int mbrtum_build_read_write_multiple_registers_request(
     return MBRTUM_OK;
 }
 
+int mbrtum_build_read_file_record_request(
+    uint8_t slave_address,
+    const mbrtum_file_record_request_t *subrequests,
+    size_t subrequest_count,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    size_t request_data_length;
+    size_t response_data_length = 0u;
+    size_t length_without_crc;
+
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (subrequests == NULL || request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (subrequest_count == 0u ||
+        subrequest_count > MB_FILE_RECORD_MAX_SUBREQUESTS) {
+        return MBRTUM_ERROR_QUANTITY;
+    }
+
+    request_data_length = subrequest_count * 7u;
+    if (request_data_length > MB_FILE_RECORD_REQUEST_DATA_MAX) {
+        return MBRTUM_ERROR_QUANTITY;
+    }
+
+    for (size_t i = 0u; i < subrequest_count; ++i) {
+        size_t subresponse_length;
+
+        if (subrequests[i].file_number == 0u ||
+            !file_record_range_is_valid(subrequests[i].record_number,
+                                        subrequests[i].record_length)) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        subresponse_length =
+            2u + ((size_t)subrequests[i].record_length * 2u);
+        if (subresponse_length >
+            MB_FILE_RECORD_RESPONSE_DATA_MAX - response_data_length) {
+            return MBRTUM_ERROR_QUANTITY;
+        }
+        response_data_length += subresponse_length;
+    }
+
+    length_without_crc = 3u + request_data_length;
+    if (request_adu_capacity < length_without_crc + MODBUS_RTU_CRC_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_READ_FILE_RECORD;
+    request_adu[2] = (uint8_t)request_data_length;
+    for (size_t i = 0u; i < subrequest_count; ++i) {
+        size_t offset = 3u + (i * 7u);
+
+        request_adu[offset] = MB_FILE_RECORD_REFERENCE_TYPE;
+        write_be16(&request_adu[offset + 1u], subrequests[i].file_number);
+        write_be16(&request_adu[offset + 3u], subrequests[i].record_number);
+        write_be16(&request_adu[offset + 5u], subrequests[i].record_length);
+    }
+
+    *request_adu_length = append_crc(request_adu, length_without_crc);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_READ_FILE_RECORD,
+                   (uint16_t)request_data_length,
+                   (uint16_t)response_data_length,
+                   (uint16_t)subrequest_count);
+    return MBRTUM_OK;
+}
+
 int mbrtum_build_read_device_identification_request(
     uint8_t slave_address,
     uint8_t read_device_id_code,
@@ -771,6 +858,21 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             return MBRTUM_ERROR_QUANTITY;
         }
         break;
+    case MBRTUM_FC_READ_FILE_RECORD:
+        if (request->start_address < 7u ||
+            request->start_address > MB_FILE_RECORD_REQUEST_DATA_MAX ||
+            (request->start_address % 7u) != 0u ||
+            request->quantity < 4u ||
+            request->quantity > MB_FILE_RECORD_RESPONSE_DATA_MAX ||
+            (request->quantity % 2u) != 0u ||
+            request->value == 0u ||
+            request->value > MB_FILE_RECORD_MAX_SUBREQUESTS ||
+            request->value != request->start_address / 7u ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
     case MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS:
         if (request->quantity == 0u || request->quantity > 125u ||
             !address_range_is_valid(request->start_address, request->quantity) ||
@@ -832,6 +934,42 @@ static int original_request_adu_is_valid(
         return 0;
     }
 
+    if (request->function == MBRTUM_FC_READ_FILE_RECORD) {
+        size_t response_data_length = 0u;
+        size_t request_data_length = request->start_address;
+
+        if (request_adu_length != 5u + request_data_length ||
+            request_adu[2] != (uint8_t)request_data_length) {
+            return 0;
+        }
+        for (size_t offset = 3u;
+             offset < request_adu_length - MODBUS_RTU_CRC_SIZE;
+             offset += 7u) {
+            uint16_t file_number;
+            uint16_t record_number;
+            uint16_t record_length;
+            size_t subresponse_length;
+
+            if (request_adu[offset] != MB_FILE_RECORD_REFERENCE_TYPE) {
+                return 0;
+            }
+            file_number = read_be16(&request_adu[offset + 1u]);
+            record_number = read_be16(&request_adu[offset + 3u]);
+            record_length = read_be16(&request_adu[offset + 5u]);
+            if (file_number == 0u ||
+                !file_record_range_is_valid(record_number, record_length)) {
+                return 0;
+            }
+            subresponse_length = 2u + ((size_t)record_length * 2u);
+            if (subresponse_length >
+                MB_FILE_RECORD_RESPONSE_DATA_MAX - response_data_length) {
+                return 0;
+            }
+            response_data_length += subresponse_length;
+        }
+        return response_data_length == request->quantity;
+    }
+
     if (request->function == MBRTUM_FC_DIAGNOSTICS) {
         uint16_t request_data = 0u;
 
@@ -873,7 +1011,8 @@ int mbrtum_process_response_with_request_adu(
     if (request_result != MBRTUM_OK) {
         return request_result;
     }
-    if (request->function == MBRTUM_FC_DIAGNOSTICS &&
+    if ((request->function == MBRTUM_FC_DIAGNOSTICS ||
+         request->function == MBRTUM_FC_READ_FILE_RECORD) &&
         !original_request_adu_is_valid(request,
                                        request_adu,
                                        request_adu_length)) {
@@ -927,6 +1066,55 @@ int mbrtum_process_response_with_request_adu(
         response->function = request->function;
         response->data = &response_adu[3];
         response->data_length = expected_byte_count;
+        return MBRTUM_OK;
+    }
+
+    case MBRTUM_FC_READ_FILE_RECORD: {
+        size_t expected_length = 5u + (size_t)request->quantity;
+        size_t request_offset = 3u;
+        size_t response_offset = 3u;
+
+        if (response_adu_length != expected_length) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        if (response_adu[2] != (uint8_t)request->quantity) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+
+        for (uint16_t i = 0u; i < request->value; ++i) {
+            uint16_t record_length;
+            size_t expected_file_response_length;
+            size_t subresponse_total_length;
+
+            if (request_offset + 7u > request_adu_length - 2u ||
+                response_offset + 2u > response_adu_length - 2u) {
+                return MBRTUM_ERROR_RESPONSE_LENGTH;
+            }
+            record_length = read_be16(&request_adu[request_offset + 5u]);
+            expected_file_response_length =
+                1u + ((size_t)record_length * 2u);
+            subresponse_total_length = 1u + expected_file_response_length;
+            if ((size_t)response_adu[response_offset] !=
+                    expected_file_response_length ||
+                response_adu[response_offset + 1u] !=
+                    MB_FILE_RECORD_REFERENCE_TYPE) {
+                return MBRTUM_ERROR_MALFORMED_RESPONSE;
+            }
+            if (response_offset + subresponse_total_length >
+                response_adu_length - 2u) {
+                return MBRTUM_ERROR_RESPONSE_LENGTH;
+            }
+            request_offset += 7u;
+            response_offset += subresponse_total_length;
+        }
+        if (request_offset != request_adu_length - 2u ||
+            response_offset != response_adu_length - 2u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+
+        response->function = request->function;
+        response->data = &response_adu[3];
+        response->data_length = request->quantity;
         return MBRTUM_OK;
     }
 
@@ -1347,6 +1535,125 @@ int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
         return MBRTUM_ERROR_INDEX;
     }
     *event = event_log->events[index];
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_file_record_response(
+    const mbrtum_response_t *response,
+    mbrtum_file_record_response_t *file_record_response)
+{
+    size_t offset = 0u;
+    size_t count = 0u;
+
+    if (response == NULL || file_record_response == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    memset(file_record_response, 0, sizeof(*file_record_response));
+    if (response->exception_code != 0u ||
+        response->function != MBRTUM_FC_READ_FILE_RECORD ||
+        response->data == NULL || response->data_length < 4u ||
+        response->data_length > MB_FILE_RECORD_RESPONSE_DATA_MAX) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+
+    while (offset < response->data_length) {
+        size_t file_response_length;
+        size_t subresponse_length;
+
+        if (offset + 2u > response->data_length) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        file_response_length = response->data[offset];
+        if (file_response_length < 3u ||
+            (file_response_length % 2u) == 0u ||
+            response->data[offset + 1u] !=
+                MB_FILE_RECORD_REFERENCE_TYPE) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        subresponse_length = 1u + file_response_length;
+        if (subresponse_length > response->data_length - offset) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        offset += subresponse_length;
+        ++count;
+    }
+
+    file_record_response->subresponse_count = count;
+    file_record_response->subresponses = response->data;
+    file_record_response->subresponses_length = response->data_length;
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_file_record_subresponse(
+    const mbrtum_file_record_response_t *file_record_response,
+    size_t index,
+    mbrtum_file_record_subresponse_t *subresponse)
+{
+    size_t offset = 0u;
+
+    if (file_record_response == NULL || subresponse == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    memset(subresponse, 0, sizeof(*subresponse));
+    if (file_record_response->subresponses == NULL ||
+        index >= file_record_response->subresponse_count) {
+        return MBRTUM_ERROR_INDEX;
+    }
+
+    for (size_t i = 0u; i <= index; ++i) {
+        size_t file_response_length;
+        size_t subresponse_length;
+
+        if (offset + 2u > file_record_response->subresponses_length) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        file_response_length =
+            file_record_response->subresponses[offset];
+        subresponse_length = 1u + file_response_length;
+        if (file_response_length < 3u ||
+            (file_response_length % 2u) == 0u ||
+            subresponse_length >
+                file_record_response->subresponses_length - offset ||
+            file_record_response->subresponses[offset + 1u] !=
+                MB_FILE_RECORD_REFERENCE_TYPE) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        if (i == index) {
+            subresponse->reference_type =
+                file_record_response->subresponses[offset + 1u];
+            subresponse->record_data =
+                &file_record_response->subresponses[offset + 2u];
+            subresponse->record_data_length = file_response_length - 1u;
+            subresponse->record_length =
+                (uint16_t)(subresponse->record_data_length / 2u);
+            return MBRTUM_OK;
+        }
+        offset += subresponse_length;
+    }
+    return MBRTUM_ERROR_INDEX;
+}
+
+int mbrtum_get_file_record_register(
+    const mbrtum_file_record_subresponse_t *subresponse,
+    uint16_t index,
+    uint16_t *value)
+{
+    size_t offset;
+
+    if (subresponse == NULL || value == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (subresponse->reference_type != MB_FILE_RECORD_REFERENCE_TYPE ||
+        subresponse->record_data == NULL ||
+        subresponse->record_data_length !=
+            (size_t)subresponse->record_length * 2u) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+    if (index >= subresponse->record_length) {
+        return MBRTUM_ERROR_INDEX;
+    }
+    offset = (size_t)index * 2u;
+    *value = read_be16(&subresponse->record_data[offset]);
     return MBRTUM_OK;
 }
 

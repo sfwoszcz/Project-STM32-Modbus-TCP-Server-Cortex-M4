@@ -50,6 +50,15 @@ transmit completion and never starts a response deadline. Broadcast writes are
 the current use of this behavior; the transaction layer does not hard-code a
 specific function code.
 
+## FC20 support
+
+The transaction engine accepts FC20 requests produced by
+`mbrtum_build_read_file_record_request()`. Before transmission it checks the
+request byte count, subrequest count, every reference/file/record field,
+combined expected response size, exact ADU length, response expectation, and
+CRC against the immutable request descriptor. Response validation uses the
+transaction-owned request ADU to match each returned subresponse length.
+
 ## FC23 support
 
 The transaction engine accepts FC23 requests produced by

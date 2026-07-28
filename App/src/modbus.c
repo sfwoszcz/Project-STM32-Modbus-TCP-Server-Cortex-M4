@@ -2,6 +2,8 @@
 
 #include "modbus_device_id.h"
 #include "modbus_device_id_internal.h"
+#include "modbus_file_record.h"
+#include "modbus_file_record_internal.h"
 #include "modbus_pdu.h"
 
 #include <string.h>
@@ -34,6 +36,13 @@ typedef struct {
 } mb_device_id_state_t;
 
 static mb_device_id_state_t device_id_state;
+
+typedef struct {
+    size_t file_count;
+    mb_file_record_file_t files[MB_FILE_RECORD_MAX_FILES];
+} mb_file_record_state_t;
+
+static mb_file_record_state_t file_record_state;
 
 static int conformity_level_is_valid(uint8_t conformity_level)
 {
@@ -88,6 +97,11 @@ static void clear_device_id_unlocked(void)
     memset(&device_id_state, 0, sizeof(device_id_state));
 }
 
+static void clear_file_records_unlocked(void)
+{
+    memset(&file_record_state, 0, sizeof(file_record_state));
+}
+
 void mb_init(void)
 {
     mb_lock();
@@ -96,6 +110,7 @@ void mb_init(void)
     memset(holding_registers, 0, sizeof(holding_registers));
     memset(input_registers, 0, sizeof(input_registers));
     clear_device_id_unlocked();
+    clear_file_records_unlocked();
     mb_unlock();
 }
 
@@ -374,6 +389,197 @@ uint8_t mb_device_id_process_request(uint8_t read_device_id_code,
         *response_pdu_len = offset;
     }
 
+    mb_unlock();
+    return 0u;
+}
+
+int mb_file_record_configure(const mb_file_record_file_t *files,
+                             size_t file_count)
+{
+    if (files == NULL) {
+        return MB_FILE_RECORD_ERROR_ARGUMENT;
+    }
+    if (file_count == 0u || file_count > MB_FILE_RECORD_MAX_FILES) {
+        return MB_FILE_RECORD_ERROR_CAPACITY;
+    }
+
+    for (size_t i = 0u; i < file_count; ++i) {
+        if (files[i].file_number == 0u || files[i].records == NULL ||
+            files[i].record_count == 0u ||
+            files[i].record_count > MB_FILE_RECORD_MAX_RECORDS_PER_FILE) {
+            return MB_FILE_RECORD_ERROR_FILES;
+        }
+        if (i > 0u &&
+            files[i - 1u].file_number >= files[i].file_number) {
+            return MB_FILE_RECORD_ERROR_FILES;
+        }
+    }
+
+    mb_lock();
+    clear_file_records_unlocked();
+    memcpy(file_record_state.files,
+           files,
+           file_count * sizeof(file_record_state.files[0]));
+    file_record_state.file_count = file_count;
+    mb_unlock();
+    return MB_FILE_RECORD_OK;
+}
+
+void mb_file_record_clear(void)
+{
+    mb_lock();
+    clear_file_records_unlocked();
+    mb_unlock();
+}
+
+int mb_file_record_is_configured(void)
+{
+    int configured;
+
+    mb_lock();
+    configured = file_record_state.file_count != 0u;
+    mb_unlock();
+    return configured;
+}
+
+static const mb_file_record_file_t *find_file_record_unlocked(
+    uint16_t file_number)
+{
+    for (size_t i = 0u; i < file_record_state.file_count; ++i) {
+        if (file_record_state.files[i].file_number == file_number) {
+            return &file_record_state.files[i];
+        }
+        if (file_record_state.files[i].file_number > file_number) {
+            break;
+        }
+    }
+    return NULL;
+}
+
+uint8_t mb_file_record_process_read_request(const uint8_t *request_pdu,
+                                            size_t request_pdu_len,
+                                            uint8_t *response_pdu,
+                                            size_t response_capacity,
+                                            size_t *response_pdu_len)
+{
+    size_t request_data_length;
+    size_t response_data_length = 0u;
+    size_t response_limit;
+
+    if (request_pdu == NULL || response_pdu == NULL ||
+        response_pdu_len == NULL) {
+        return MB_EX_SERVER_FAILURE;
+    }
+    *response_pdu_len = 0u;
+
+    if (request_pdu_len < 2u) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+    request_data_length = request_pdu[1];
+    if (request_data_length < 7u ||
+        request_data_length > MB_FILE_RECORD_REQUEST_DATA_MAX ||
+        (request_data_length % 7u) != 0u ||
+        request_pdu_len != 2u + request_data_length) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+
+    response_limit = response_capacity < MODBUS_PDU_MAX_SIZE
+                         ? response_capacity
+                         : MODBUS_PDU_MAX_SIZE;
+
+    mb_lock();
+    for (size_t offset = 2u; offset < request_pdu_len; offset += 7u) {
+        const mb_file_record_file_t *file;
+        uint16_t file_number;
+        uint16_t record_number;
+        uint16_t record_length;
+        size_t subresponse_length;
+
+        if (request_pdu[offset] != MB_FILE_RECORD_REFERENCE_TYPE) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+        file_number = (uint16_t)(((uint16_t)request_pdu[offset + 1u] << 8u) |
+                                 request_pdu[offset + 2u]);
+        record_number =
+            (uint16_t)(((uint16_t)request_pdu[offset + 3u] << 8u) |
+                       request_pdu[offset + 4u]);
+        record_length =
+            (uint16_t)(((uint16_t)request_pdu[offset + 5u] << 8u) |
+                       request_pdu[offset + 6u]);
+
+        if (record_length == 0u) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        if (record_number >= MB_FILE_RECORD_MAX_RECORDS_PER_FILE ||
+            (uint32_t)record_number + (uint32_t)record_length >
+                MB_FILE_RECORD_MAX_RECORDS_PER_FILE) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+
+        file = find_file_record_unlocked(file_number);
+        if (file == NULL || (size_t)record_number > file->record_count ||
+            (size_t)record_length >
+                file->record_count - (size_t)record_number) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+
+        subresponse_length = 2u + ((size_t)record_length * 2u);
+        if (subresponse_length >
+                MB_FILE_RECORD_RESPONSE_DATA_MAX - response_data_length) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        response_data_length += subresponse_length;
+    }
+
+    if (response_limit < 2u + response_data_length) {
+        mb_unlock();
+        return MB_EX_SERVER_FAILURE;
+    }
+
+    response_pdu[0] = 0x14u;
+    response_pdu[1] = (uint8_t)response_data_length;
+    {
+        size_t response_offset = 2u;
+
+        for (size_t request_offset = 2u;
+             request_offset < request_pdu_len;
+             request_offset += 7u) {
+            const mb_file_record_file_t *file;
+            uint16_t file_number;
+            uint16_t record_number;
+            uint16_t record_length;
+
+            file_number =
+                (uint16_t)(((uint16_t)request_pdu[request_offset + 1u] << 8u) |
+                           request_pdu[request_offset + 2u]);
+            record_number =
+                (uint16_t)(((uint16_t)request_pdu[request_offset + 3u] << 8u) |
+                           request_pdu[request_offset + 4u]);
+            record_length =
+                (uint16_t)(((uint16_t)request_pdu[request_offset + 5u] << 8u) |
+                           request_pdu[request_offset + 6u]);
+            file = find_file_record_unlocked(file_number);
+
+            response_pdu[response_offset] =
+                (uint8_t)(1u + ((size_t)record_length * 2u));
+            response_pdu[response_offset + 1u] =
+                MB_FILE_RECORD_REFERENCE_TYPE;
+            response_offset += 2u;
+            for (uint16_t i = 0u; i < record_length; ++i) {
+                uint16_t value = file->records[(size_t)record_number + i];
+
+                response_pdu[response_offset] = (uint8_t)(value >> 8u);
+                response_pdu[response_offset + 1u] = (uint8_t)value;
+                response_offset += 2u;
+            }
+        }
+        *response_pdu_len = response_offset;
+    }
     mb_unlock();
     return 0u;
 }
