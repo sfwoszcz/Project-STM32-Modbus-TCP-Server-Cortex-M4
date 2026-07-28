@@ -13,6 +13,7 @@ Implemented now:
 - address 0 broadcast handling
 - silent discard of invalid CRC frames and frames for another slave
 - shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `17`, and `2B/0E`
+- RTU-only FC11 Report Server ID processing with copied fixed-capacity data
 - normal and exception response framing
 - host tests for all supported function codes and RTU-specific behavior
 
@@ -78,7 +79,7 @@ For a broadcast request at address 0:
 
 - supported write-only functions are processed
 - no response is generated
-- read functions, FC20, FC23, FC43/14, and unsupported functions are ignored
+- read functions, FC11, FC20, FC23, FC43/14, and unsupported functions are ignored
 - FC21 is processed as a broadcast write and produces no response
 - malformed writes do not modify the register map
 
@@ -124,6 +125,15 @@ See [`modbus-rtu-timing.md`](modbus-rtu-timing.md) for timing calculations, buff
 
 - Modbus Application Protocol Specification V1.1b3: <https://www.modbus.org/file/secure/modbusprotocolspecification.pdf>
 - Modbus Serial Line Protocol and Implementation Guide V1.02: <https://www.modbus.org/file/secure/modbusoverserial.pdf>
+
+## FC11 Report Server ID
+
+FC11 is dispatched exclusively by the RTU wrapper and is deliberately absent
+from the shared PDU/TCP path. Applications link
+`App/src/modbus_rtu_server_id.c`, define `MBRTU_ENABLE_SERVER_ID=1`, and
+configure a copied, device-specific Server ID of 1–250 bytes, run status, and
+optional Additional Data with `mbrtu_server_id_configure()`. Address-zero requests are ignored. See
+[`modbus-fc11-report-server-id.md`](modbus-fc11-report-server-id.md).
 
 ## FC20 Read File Record
 

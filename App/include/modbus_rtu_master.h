@@ -2,6 +2,7 @@
 #define MODBUS_RTU_MASTER_H
 
 #include "modbus_rtu.h"
+#include "modbus_rtu_server_id.h"
 #include "modbus_device_id.h"
 #include "modbus_file_record.h"
 
@@ -23,6 +24,7 @@ extern "C" {
 #define MBRTUM_FC_DIAGNOSTICS                       MBRTU_FC_DIAGNOSTICS
 #define MBRTUM_FC_GET_COMM_EVENT_COUNTER            MBRTU_FC_GET_COMM_EVENT_COUNTER
 #define MBRTUM_FC_GET_COMM_EVENT_LOG                MBRTU_FC_GET_COMM_EVENT_LOG
+#define MBRTUM_FC_REPORT_SERVER_ID                   MBRTU_SERVER_ID_FUNCTION_CODE
 #define MBRTUM_FC_WRITE_MULTIPLE_COILS             0x0Fu
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
 #define MBRTUM_FC_READ_FILE_RECORD                  MB_FILE_RECORD_READ_FUNCTION_CODE
@@ -79,7 +81,9 @@ extern "C" {
  * and quantity describe the read range, while write_start_address and
  * write_quantity describe the write range. For FC43/14, start_address stores
  * the Read Device ID code, quantity stores the requested object ID, and value
- * stores the MEI type 0x0E. These fields remain zero for FC07, FC0B, and FC0C.
+ * stores the MEI type 0x0E. For FC11, quantity stores the expected
+ * device-specific Server ID length. The remaining fields are zero for FC11,
+ * and all descriptor fields are zero for FC07, FC0B, and FC0C.
  *
  * expects_response is zero for valid broadcast writes and for requests such
  * as FC08 Force Listen Only Mode that intentionally have no response.
@@ -99,8 +103,9 @@ typedef struct {
  * View of one validated Modbus RTU master response.
  *
  * data points into the caller-owned response ADU and remains valid only while
- * that ADU remains unchanged. For FC01-FC04 and FC23 normal responses, data
- * references the packed-bit or register data bytes after the byte-count field.
+ * that ADU remains unchanged. For FC01-FC04, FC11, and FC23 normal
+ * responses, data references the validated function-specific data bytes after
+ * the byte-count field.
  *
  * For successful write acknowledgements and exception responses, data is NULL
  * and data_length is zero.
@@ -131,6 +136,15 @@ typedef struct {
     const uint8_t *events;
     size_t events_length;
 } mbrtum_comm_event_log_t;
+
+/** Decoded zero-copy FC11 Report Server ID response view. */
+typedef struct {
+    const uint8_t *server_id;
+    size_t server_id_length;
+    uint8_t run_status;
+    const uint8_t *additional_data;
+    size_t additional_data_length;
+} mbrtum_server_id_response_t;
 
 /** Decoded zero-copy FC43/14 response view. */
 typedef struct {
@@ -410,13 +424,27 @@ int mbrtum_build_get_comm_event_log_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC11 Report Server ID request.
+ *
+ * expected_server_id_length is device-specific and is used to locate and
+ * validate the one-byte Run Indicator Status in the response.
+ */
+int mbrtum_build_report_server_id_request(
+    uint8_t slave_address,
+    uint16_t expected_server_id_length,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Validate a response while also supplying the original request ADU.
  *
  * This form is required for FC08 so echoed diagnostic data can be compared
  * byte-for-byte. It is also required for FC20 so each subresponse can be
  * validated against its original subrequest and for FC21 so the complete
  * response echo can be matched against the original request. It supports all
- * ordinary requests, FC07/FC0B/FC0C, FC23, and FC43/14.
+ * ordinary requests, FC07/FC0B/FC0C/FC11, FC23, and FC43/14.
  */
 int mbrtum_process_response_with_request_adu(
     const mbrtum_request_t *request,
@@ -499,6 +527,12 @@ int mbrtum_get_comm_event_log(const mbrtum_response_t *response,
 int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
                                 size_t index,
                                 uint8_t *event);
+
+/** Decode a validated FC11 response into a zero-copy view. */
+int mbrtum_get_server_id_response(
+    const mbrtum_request_t *request,
+    const mbrtum_response_t *response,
+    mbrtum_server_id_response_t *server_id_response);
 
 /** Decode a validated FC20 response into a zero-copy view. */
 int mbrtum_get_file_record_response(

@@ -302,6 +302,18 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
             adu_length != MBRTUM_TXN_MIN_ADU_SIZE) {
             return 0;
         }
+    } else if (request->function == MBRTUM_FC_REPORT_SERVER_ID) {
+        if (request->slave_address == MODBUS_RTU_BROADCAST_ADDRESS ||
+            request->expects_response != 1u ||
+            request->start_address != 0u ||
+            request->quantity == 0u ||
+            request->quantity > MBRTU_SERVER_ID_MAX_SERVER_ID_LENGTH ||
+            request->value != 0u ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u ||
+            adu_length != MBRTUM_TXN_MIN_ADU_SIZE) {
+            return 0;
+        }
     }
 
     calculated_crc = mb_crc16(adu, adu_length - 2u);

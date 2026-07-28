@@ -15,11 +15,15 @@ add_library(modbus_tcp_core STATIC
     App/src/modbus_crc16.c
     App/src/modbus_rtu.c
     App/src/modbus_rtu_diagnostics.c
+    App/src/modbus_rtu_server_id.c
     App/src/modbus_rtu_master.c
     App/src/modbus_rtu_master_transaction.c
 )
 target_include_directories(modbus_tcp_core PUBLIC App/include)
-target_compile_definitions(modbus_tcp_core PUBLIC MBRTU_ENABLE_DIAGNOSTICS=1)
+target_compile_definitions(modbus_tcp_core PUBLIC
+    MBRTU_ENABLE_DIAGNOSTICS=1
+    MBRTU_ENABLE_SERVER_ID=1
+)
 
 add_executable(modbus_posix_server Examples/posix_server.c)
 target_link_libraries(modbus_posix_server PRIVATE modbus_tcp_core)
@@ -50,6 +54,9 @@ target_link_libraries(modbus_rtu_master_transaction_tests PRIVATE modbus_tcp_cor
 
 add_executable(modbus_rtu_diagnostics_tests Tests/host/test_modbus_rtu_diagnostics.c)
 target_link_libraries(modbus_rtu_diagnostics_tests PRIVATE modbus_tcp_core)
+
+add_executable(modbus_fc11_tests Tests/host/test_modbus_fc11.c)
+target_link_libraries(modbus_fc11_tests PRIVATE modbus_tcp_core)
 
 add_executable(modbus_fc23_tests Tests/host/test_modbus_fc23.c)
 target_link_libraries(modbus_fc23_tests PRIVATE modbus_tcp_core)
@@ -93,6 +100,7 @@ add_test(NAME rtu_legacy_link COMMAND modbus_rtu_legacy_link_tests)
 add_test(NAME rtu_master COMMAND modbus_rtu_master_tests)
 add_test(NAME rtu_master_transaction COMMAND modbus_rtu_master_transaction_tests)
 add_test(NAME rtu_diagnostics COMMAND modbus_rtu_diagnostics_tests)
+add_test(NAME fc11 COMMAND modbus_fc11_tests)
 add_test(NAME fc23 COMMAND modbus_fc23_tests)
 add_test(NAME fc43_device_id COMMAND modbus_fc43_device_id_tests)
 add_test(NAME fc20 COMMAND modbus_fc20_tests)

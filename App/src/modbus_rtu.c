@@ -4,9 +4,15 @@
 #include "modbus_file_record.h"
 #include "modbus_pdu.h"
 #include "modbus_rtu_diagnostics.h"
+#include "modbus_rtu_server_id.h"
+#include "modbus_rtu_server_id_internal.h"
 
 #ifndef MBRTU_ENABLE_DIAGNOSTICS
 #define MBRTU_ENABLE_DIAGNOSTICS 0
+#endif
+
+#ifndef MBRTU_ENABLE_SERVER_ID
+#define MBRTU_ENABLE_SERVER_ID 0
 #endif
 
 #if MBRTU_ENABLE_DIAGNOSTICS == 0
@@ -113,6 +119,26 @@ static int diagnostics_disabled_process_pdu(
 #define mbrtu_diagnostics_note_exception diagnostics_disabled_note_exception
 #define mbrtu_diagnostics_is_listen_only diagnostics_disabled_is_listen_only
 #define mbrtu_diagnostics_process_pdu diagnostics_disabled_process_pdu
+#endif
+
+#if MBRTU_ENABLE_SERVER_ID == 0
+/* Preserve the pre-FC11 RTU source list when the optional source is absent. */
+static int server_id_disabled_process_pdu(const uint8_t *request_pdu,
+                                          size_t request_pdu_len,
+                                          uint8_t *response_pdu,
+                                          size_t response_capacity,
+                                          size_t *response_pdu_len)
+{
+    (void)request_pdu;
+    (void)request_pdu_len;
+    (void)response_pdu;
+    (void)response_capacity;
+    if (response_pdu_len != NULL) {
+        *response_pdu_len = 0u;
+    }
+    return MBRTU_SERVER_ID_PDU_NOT_HANDLED;
+}
+#define mbrtu_server_id_process_pdu server_id_disabled_process_pdu
 #endif
 
 static uint16_t read_crc_le(const uint8_t *p)
@@ -286,6 +312,61 @@ int mbrtu_process_adu_with_diagnostics(
         }
 
         if (diagnostic_result == MBRTU_DIAGNOSTICS_PDU_ERROR) {
+            return MBRTU_ERROR_PDU;
+        }
+    }
+
+    if (request_adu[1] == MBRTU_SERVER_ID_FUNCTION_CODE) {
+        uint8_t *server_id_response =
+            response_capacity > 1u ? &response_adu[1] : response_adu;
+        size_t server_id_response_capacity =
+            response_capacity > 1u + MODBUS_RTU_CRC_SIZE
+                ? response_capacity - 1u - MODBUS_RTU_CRC_SIZE
+                : 0u;
+        size_t server_id_response_len = 0u;
+        int server_id_result;
+
+        if (broadcast != 0u) {
+            mbrtu_diagnostics_note_normal_completion(diagnostics, 0u, 1u);
+            return MBRTU_NO_RESPONSE;
+        }
+
+        server_id_result = mbrtu_server_id_process_pdu(
+            &request_adu[1],
+            request_pdu_len,
+            server_id_response,
+            server_id_response_capacity,
+            &server_id_response_len);
+        if (server_id_result == MBRTU_SERVER_ID_PDU_RESPONSE) {
+            uint8_t exception_code;
+
+            if (response_capacity <
+                1u + server_id_response_len + MODBUS_RTU_CRC_SIZE) {
+                return MBRTU_ERROR_RESPONSE_CAPACITY;
+            }
+            response_adu[0] = request_address;
+            calculated_crc = mb_crc16(response_adu,
+                                      1u + server_id_response_len);
+            write_crc_le(&response_adu[1u + server_id_response_len],
+                         calculated_crc);
+            *response_adu_len =
+                1u + server_id_response_len + MODBUS_RTU_CRC_SIZE;
+
+            exception_code = response_exception_code(
+                &response_adu[1], server_id_response_len);
+            if (exception_code != 0u) {
+                mbrtu_diagnostics_note_exception(diagnostics,
+                                                 exception_code);
+            } else {
+                mbrtu_diagnostics_note_normal_completion(
+                    diagnostics, 0u, 0u);
+            }
+            return MBRTU_RESPONSE_READY;
+        }
+        if (server_id_result == MBRTU_SERVER_ID_PDU_CAPACITY) {
+            return MBRTU_ERROR_RESPONSE_CAPACITY;
+        }
+        if (server_id_result == MBRTU_SERVER_ID_PDU_ERROR) {
             return MBRTU_ERROR_PDU;
         }
     }
