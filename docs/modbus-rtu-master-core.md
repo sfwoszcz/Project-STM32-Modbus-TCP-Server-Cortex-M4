@@ -13,7 +13,7 @@ ADU, and exposes zero-copy helpers for decoded bit and register data.
 Implemented now:
 
 - request generation for function codes `01`, `02`, `03`, `04`, `05`, `06`,
-  `0F`, `10`, and `17`
+  `0F`, `10`, `14`, `15`, `17`, and `2B/0E`
 - Modbus CRC-16 generation in low-byte-first RTU wire order
 - unicast slave addresses from 1 through 247
 - broadcast writes at address 0
@@ -26,6 +26,7 @@ Implemented now:
 - exact single-write address/value acknowledgement validation
 - exact multiple-write address/quantity acknowledgement validation
 - zero-copy bit, register, FC20 subresponse, and FC43/14 object access helpers
+- exact FC21 request-echo validation
 - strict host tests and integration with Make, CMake, and CTest
 - no dynamic allocation
 
@@ -83,6 +84,7 @@ validation.
 | `0F` | Write Multiple Coils | 1 to 1968 coils | echoed address and quantity |
 | `10` | Write Multiple Holding Registers | 1 to 123 registers | echoed address and quantity |
 | `14` | Read File Record | 35 subrequests; combined response data <= 245 bytes | file subresponses |
+| `15` | Write File Record | 27 subrequests; request data <= 251 bytes | exact request echo |
 | `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
 | `2B/0E` | Read Device Identification | Basic/Regular/Extended/Specific | segmented object list |
 
@@ -271,6 +273,20 @@ length can be checked against its original requested register count.
 `mbrtum_get_file_record_register()` provide bounded zero-copy decoding. See
 [`modbus-fc20-read-file-record.md`](modbus-fc20-read-file-record.md).
 
+## FC21 requests
+
+`mbrtum_build_write_file_record_request()` accepts up to 27 variable-length
+subrequests. Each descriptor supplies a file number, record number, register
+count, and caller-owned register-value array. The builder validates the complete
+251-byte request-data limit, encodes every register in big-endian wire order,
+and accepts both unicast and broadcast addresses.
+
+For FC21 the compact request descriptor stores the request-data byte count in
+`start_address` and the subrequest count in `quantity`. Because the normal
+response is an exact echo of all variable-length request data, validation
+requires `mbrtum_process_response_with_request_adu()`. See
+[`modbus-fc21-write-file-record.md`](modbus-fc21-write-file-record.md).
+
 ## FC23 requests
 
 `mbrtum_build_read_write_multiple_registers_request()` records the read range in
@@ -288,6 +304,7 @@ Address zero is accepted only by the write-only builders:
 - FC06
 - FC0F
 - FC10
+- FC21
 
 A successful broadcast builder sets:
 
@@ -299,7 +316,8 @@ The transport must transmit the request and must not wait for a response.
 Calling `mbrtum_process_response()` with a broadcast request returns
 `MBRTUM_ERROR_RESPONSE_NOT_EXPECTED`.
 
-Read builders, including FC20 and FC23, reject address zero.
+Read builders, including FC20 and FC23, reject address zero. FC21 accepts
+address zero because it is a write-only function.
 
 ## Modbus exception responses
 
@@ -382,6 +400,7 @@ The following objects must not overlap:
 - FC0F packed-value input
 - FC10 and FC23 register-value input
 - FC20 subrequest descriptor input
+- FC21 subrequest descriptors and record-data arrays
 
 For response processing, these objects must not overlap:
 
@@ -395,16 +414,17 @@ remains unchanged.
 ## Host verification
 
 `Tests/host/test_modbus_rtu_master.c`,
-`Tests/host/test_modbus_fc20.c`, and
+`Tests/host/test_modbus_fc20.c`,
+`Tests/host/test_modbus_fc21.c`, and
 `Tests/host/test_modbus_fc23.c` verify:
 
-- all ordinary supported request builders, including FC20 and FC23
+- all ordinary supported request builders, including FC20, FC21, and FC23
 - known request field layouts and generated CRCs
 - unicast and broadcast behavior
-- maximum FC0F, FC10, FC20, and FC23 request sizes
+- maximum FC0F, FC10, FC20, FC21, and FC23 request sizes
 - output-capacity failures
 - address-range overflow rejection
-- normal bit, register, FC20 subresponse, and FC23 response decoding
+- normal bit, register, FC20 subresponse, FC21 echo, and FC23 response validation
 - index validation
 - Modbus exception responses
 - invalid exception code and exception length rejection
@@ -415,6 +435,7 @@ remains unchanged.
 - nonzero packed-bit padding rejection
 - single-write acknowledgement mismatch rejection
 - multiple-write acknowledgement mismatch rejection
+- FC21 complete-request echo mismatch rejection
 - API argument validation
 
 Run the complete verification suite with:
@@ -431,7 +452,7 @@ cmake --build build --clean-first
 ctest --test-dir build --output-on-failure
 ```
 
-The CTest suite includes dedicated `rtu_master`, `fc20`, `fc23`, and
+The CTest suite includes dedicated `rtu_master`, `fc20`, `fc21`, `fc23`, and
 `fc43_device_id` tests.
 
 ## Transport boundary

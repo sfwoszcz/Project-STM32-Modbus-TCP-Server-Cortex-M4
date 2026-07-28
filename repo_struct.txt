@@ -36,6 +36,7 @@ stm32-modbus-tcp-server/
 │   │   ├── register_selftest_runner.c
 │   │   ├── test_modbus_crc16.c
 │   │   ├── test_modbus_fc20.c
+│   │   ├── test_modbus_fc21.c
 │   │   ├── test_modbus_fc23.c
 │   │   ├── test_modbus_fc43_device_id.c
 │   │   ├── test_modbus_pdu.c
@@ -50,6 +51,7 @@ stm32-modbus-tcp-server/
 ├── docs/
 │   ├── images/
 │   ├── modbus-fc20-read-file-record.md
+│   ├── modbus-fc21-write-file-record.md
 │   ├── modbus-fc23.md
 │   ├── modbus-fc43-device-identification.md
 │   ├── modbus-rtu-core.md

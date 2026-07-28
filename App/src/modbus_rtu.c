@@ -1,6 +1,7 @@
 #include "modbus_rtu.h"
 
 #include "modbus_crc16.h"
+#include "modbus_file_record.h"
 #include "modbus_pdu.h"
 #include "modbus_rtu_diagnostics.h"
 
@@ -128,7 +129,8 @@ static void write_crc_le(uint8_t *p, uint16_t crc)
 static int is_supported_write_function(uint8_t function)
 {
     return function == 0x05u || function == 0x06u ||
-           function == 0x0Fu || function == 0x10u;
+           function == 0x0Fu || function == 0x10u ||
+           function == MB_FILE_RECORD_WRITE_FUNCTION_CODE;
 }
 
 static uint8_t response_exception_code(const uint8_t *response_pdu,
@@ -289,7 +291,7 @@ int mbrtu_process_adu_with_diagnostics(
     }
 
     if (request_address == MODBUS_RTU_BROADCAST_ADDRESS) {
-        uint8_t discarded_response[5];
+        uint8_t discarded_response[MODBUS_PDU_MAX_SIZE];
         size_t discarded_response_len = 0u;
         int pdu_result;
 

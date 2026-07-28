@@ -442,7 +442,7 @@ int mb_file_record_is_configured(void)
     return configured;
 }
 
-static const mb_file_record_file_t *find_file_record_unlocked(
+static mb_file_record_file_t *find_file_record_unlocked(
     uint16_t file_number)
 {
     for (size_t i = 0u; i < file_record_state.file_count; ++i) {
@@ -580,6 +580,141 @@ uint8_t mb_file_record_process_read_request(const uint8_t *request_pdu,
         }
         *response_pdu_len = response_offset;
     }
+    mb_unlock();
+    return 0u;
+}
+
+
+uint8_t mb_file_record_process_write_request(const uint8_t *request_pdu,
+                                             size_t request_pdu_len,
+                                             uint8_t *response_pdu,
+                                             size_t response_capacity,
+                                             size_t *response_pdu_len)
+{
+    size_t request_data_length;
+    size_t response_limit;
+    size_t subrequest_count = 0u;
+    size_t offset;
+
+    if (request_pdu == NULL || response_pdu == NULL ||
+        response_pdu_len == NULL) {
+        return MB_EX_SERVER_FAILURE;
+    }
+    *response_pdu_len = 0u;
+
+    if (request_pdu_len < 2u) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+    request_data_length = request_pdu[1];
+    if (request_data_length < 9u ||
+        request_data_length > MB_FILE_RECORD_WRITE_REQUEST_DATA_MAX ||
+        request_pdu_len != 2u + request_data_length) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+
+    response_limit = response_capacity < MODBUS_PDU_MAX_SIZE
+                         ? response_capacity
+                         : MODBUS_PDU_MAX_SIZE;
+
+    mb_lock();
+    offset = 2u;
+    while (offset < request_pdu_len) {
+        const mb_file_record_file_t *file;
+        uint16_t file_number;
+        uint16_t record_number;
+        uint16_t record_length;
+        size_t record_data_length;
+        size_t subrequest_length;
+
+        if (request_pdu_len - offset < 7u) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        if (request_pdu[offset] != MB_FILE_RECORD_REFERENCE_TYPE) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+
+        file_number =
+            (uint16_t)(((uint16_t)request_pdu[offset + 1u] << 8u) |
+                       request_pdu[offset + 2u]);
+        record_number =
+            (uint16_t)(((uint16_t)request_pdu[offset + 3u] << 8u) |
+                       request_pdu[offset + 4u]);
+        record_length =
+            (uint16_t)(((uint16_t)request_pdu[offset + 5u] << 8u) |
+                       request_pdu[offset + 6u]);
+
+        if (record_length == 0u) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        if (record_number >= MB_FILE_RECORD_MAX_RECORDS_PER_FILE ||
+            (uint32_t)record_number + (uint32_t)record_length >
+                MB_FILE_RECORD_MAX_RECORDS_PER_FILE) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+
+        record_data_length = (size_t)record_length * 2u;
+        subrequest_length = 7u + record_data_length;
+        if (subrequest_length > request_pdu_len - offset) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+
+        file = find_file_record_unlocked(file_number);
+        if (file == NULL || (size_t)record_number > file->record_count ||
+            (size_t)record_length >
+                file->record_count - (size_t)record_number) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+
+        offset += subrequest_length;
+        ++subrequest_count;
+        if (subrequest_count > MB_FILE_RECORD_WRITE_MAX_SUBREQUESTS) {
+            mb_unlock();
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+    }
+
+    if (offset != request_pdu_len || subrequest_count == 0u) {
+        mb_unlock();
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+    if (response_limit < request_pdu_len) {
+        mb_unlock();
+        return MB_EX_SERVER_FAILURE;
+    }
+
+    offset = 2u;
+    while (offset < request_pdu_len) {
+        mb_file_record_file_t *file;
+        uint16_t file_number =
+            (uint16_t)(((uint16_t)request_pdu[offset + 1u] << 8u) |
+                       request_pdu[offset + 2u]);
+        uint16_t record_number =
+            (uint16_t)(((uint16_t)request_pdu[offset + 3u] << 8u) |
+                       request_pdu[offset + 4u]);
+        uint16_t record_length =
+            (uint16_t)(((uint16_t)request_pdu[offset + 5u] << 8u) |
+                       request_pdu[offset + 6u]);
+        size_t data_offset = offset + 7u;
+
+        file = find_file_record_unlocked(file_number);
+        for (uint16_t i = 0u; i < record_length; ++i) {
+            file->records[(size_t)record_number + i] =
+                (uint16_t)(((uint16_t)request_pdu[data_offset +
+                                                  ((size_t)i * 2u)]
+                            << 8u) |
+                           request_pdu[data_offset + ((size_t)i * 2u) + 1u]);
+        }
+        offset = data_offset + ((size_t)record_length * 2u);
+    }
+
+    memmove(response_pdu, request_pdu, request_pdu_len);
+    *response_pdu_len = request_pdu_len;
     mb_unlock();
     return 0u;
 }

@@ -9,12 +9,16 @@ extern "C" {
 #endif
 
 #define MB_FILE_RECORD_READ_FUNCTION_CODE 0x14u
+#define MB_FILE_RECORD_WRITE_FUNCTION_CODE 0x15u
 #define MB_FILE_RECORD_REFERENCE_TYPE 0x06u
 #define MB_FILE_RECORD_MAX_FILES 8u
 #define MB_FILE_RECORD_MAX_RECORDS_PER_FILE 10000u
 #define MB_FILE_RECORD_MAX_SUBREQUESTS 35u
 #define MB_FILE_RECORD_REQUEST_DATA_MAX 245u
 #define MB_FILE_RECORD_RESPONSE_DATA_MAX 245u
+#define MB_FILE_RECORD_WRITE_MAX_SUBREQUESTS 27u
+#define MB_FILE_RECORD_WRITE_REQUEST_DATA_MAX 251u
+#define MB_FILE_RECORD_WRITE_RESPONSE_DATA_MAX 251u
 
 #define MB_FILE_RECORD_OK 0
 #define MB_FILE_RECORD_ERROR_ARGUMENT (-1)
@@ -29,8 +33,8 @@ extern "C" {
  * configured. The portable core copies only these descriptors; it does not
  * copy the record data or allocate memory.
  *
- * The pointer is intentionally writable so the same configured map can later
- * support FC21 Write File Record without changing the public data model.
+ * The pointer is writable because FC21 Write File Record updates the same
+ * configured application-owned storage used by FC20 reads.
  */
 typedef struct {
     uint16_t file_number;

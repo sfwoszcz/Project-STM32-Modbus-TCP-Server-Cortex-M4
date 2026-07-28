@@ -585,6 +585,92 @@ int mbrtum_build_read_file_record_request(
     return MBRTUM_OK;
 }
 
+
+int mbrtum_build_write_file_record_request(
+    uint8_t slave_address,
+    const mbrtum_write_file_record_request_t *subrequests,
+    size_t subrequest_count,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    size_t request_data_length = 0u;
+    size_t length_without_crc;
+
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (subrequests == NULL || request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!write_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (subrequest_count == 0u ||
+        subrequest_count > MB_FILE_RECORD_WRITE_MAX_SUBREQUESTS) {
+        return MBRTUM_ERROR_QUANTITY;
+    }
+
+    for (size_t i = 0u; i < subrequest_count; ++i) {
+        size_t subrequest_length;
+
+        if (subrequests[i].file_number == 0u ||
+            subrequests[i].record_data == NULL ||
+            !file_record_range_is_valid(subrequests[i].record_number,
+                                        subrequests[i].record_length)) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        subrequest_length =
+            7u + ((size_t)subrequests[i].record_length * 2u);
+        if (subrequest_length >
+            MB_FILE_RECORD_WRITE_REQUEST_DATA_MAX - request_data_length) {
+            return MBRTUM_ERROR_QUANTITY;
+        }
+        request_data_length += subrequest_length;
+    }
+
+    length_without_crc = 3u + request_data_length;
+    if (request_adu_capacity < length_without_crc + MODBUS_RTU_CRC_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_WRITE_FILE_RECORD;
+    request_adu[2] = (uint8_t)request_data_length;
+    {
+        size_t offset = 3u;
+
+        for (size_t i = 0u; i < subrequest_count; ++i) {
+            request_adu[offset] = MB_FILE_RECORD_REFERENCE_TYPE;
+            write_be16(&request_adu[offset + 1u],
+                       subrequests[i].file_number);
+            write_be16(&request_adu[offset + 3u],
+                       subrequests[i].record_number);
+            write_be16(&request_adu[offset + 5u],
+                       subrequests[i].record_length);
+            offset += 7u;
+            for (uint16_t j = 0u; j < subrequests[i].record_length; ++j) {
+                write_be16(&request_adu[offset],
+                           subrequests[i].record_data[j]);
+                offset += 2u;
+            }
+        }
+    }
+
+    *request_adu_length = append_crc(request_adu, length_without_crc);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_WRITE_FILE_RECORD,
+                   (uint16_t)request_data_length,
+                   (uint16_t)subrequest_count,
+                   0u);
+    return MBRTUM_OK;
+}
+
 int mbrtum_build_read_device_identification_request(
     uint8_t slave_address,
     uint8_t read_device_id_code,
@@ -873,6 +959,18 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             return MBRTUM_ERROR_VALUE;
         }
         break;
+    case MBRTUM_FC_WRITE_FILE_RECORD:
+        if (request->start_address < 9u ||
+            request->start_address >
+                MB_FILE_RECORD_WRITE_REQUEST_DATA_MAX ||
+            request->quantity == 0u ||
+            request->quantity > MB_FILE_RECORD_WRITE_MAX_SUBREQUESTS ||
+            request->value != 0u ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
     case MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS:
         if (request->quantity == 0u || request->quantity > 125u ||
             !address_range_is_valid(request->start_address, request->quantity) ||
@@ -932,6 +1030,45 @@ static int original_request_adu_is_valid(
         request_adu[0] != request->slave_address ||
         request_adu[1] != request->function) {
         return 0;
+    }
+
+    if (request->function == MBRTUM_FC_WRITE_FILE_RECORD) {
+        size_t request_data_length = request->start_address;
+        size_t subrequest_count = 0u;
+        size_t offset = 3u;
+        size_t data_end;
+
+        if (request_adu_length != 5u + request_data_length ||
+            request_adu[2] != (uint8_t)request_data_length) {
+            return 0;
+        }
+        data_end = request_adu_length - MODBUS_RTU_CRC_SIZE;
+        while (offset < data_end) {
+            uint16_t file_number;
+            uint16_t record_number;
+            uint16_t record_length;
+            size_t subrequest_length;
+
+            if (data_end - offset < 7u ||
+                request_adu[offset] != MB_FILE_RECORD_REFERENCE_TYPE) {
+                return 0;
+            }
+            file_number = read_be16(&request_adu[offset + 1u]);
+            record_number = read_be16(&request_adu[offset + 3u]);
+            record_length = read_be16(&request_adu[offset + 5u]);
+            if (file_number == 0u ||
+                !file_record_range_is_valid(record_number, record_length)) {
+                return 0;
+            }
+            subrequest_length = 7u + ((size_t)record_length * 2u);
+            if (subrequest_length > data_end - offset) {
+                return 0;
+            }
+            offset += subrequest_length;
+            ++subrequest_count;
+        }
+        return offset == data_end &&
+               subrequest_count == request->quantity;
     }
 
     if (request->function == MBRTUM_FC_READ_FILE_RECORD) {
@@ -1012,7 +1149,8 @@ int mbrtum_process_response_with_request_adu(
         return request_result;
     }
     if ((request->function == MBRTUM_FC_DIAGNOSTICS ||
-         request->function == MBRTUM_FC_READ_FILE_RECORD) &&
+         request->function == MBRTUM_FC_READ_FILE_RECORD ||
+         request->function == MBRTUM_FC_WRITE_FILE_RECORD) &&
         !original_request_adu_is_valid(request,
                                        request_adu,
                                        request_adu_length)) {
@@ -1117,6 +1255,16 @@ int mbrtum_process_response_with_request_adu(
         response->data_length = request->quantity;
         return MBRTUM_OK;
     }
+
+    case MBRTUM_FC_WRITE_FILE_RECORD:
+        if (response_adu_length != request_adu_length) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        if (memcmp(response_adu, request_adu, request_adu_length) != 0) {
+            return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+        }
+        response->function = request->function;
+        return MBRTUM_OK;
 
     case MBRTUM_FC_READ_HOLDING_REGISTERS:
     case MBRTUM_FC_READ_INPUT_REGISTERS:

@@ -12,7 +12,7 @@ Implemented now:
 - configurable unicast slave address from 1 through 247
 - address 0 broadcast handling
 - silent discard of invalid CRC frames and frames for another slave
-- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, and `17`
+- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `17`, and `2B/0E`
 - normal and exception response framing
 - host tests for all supported function codes and RTU-specific behavior
 
@@ -78,7 +78,8 @@ For a broadcast request at address 0:
 
 - supported write-only functions are processed
 - no response is generated
-- read functions, FC23, and unsupported functions are ignored
+- read functions, FC20, FC23, FC43/14, and unsupported functions are ignored
+- FC21 is processed as a broadcast write and produces no response
 - malformed writes do not modify the register map
 
 Frames with addresses 248 through 255 are reserved and are not accepted as configured slave addresses.
@@ -136,6 +137,18 @@ Each request contains one or more seven-byte subrequests with reference type
 `0x06`, file number, record number, and register count. The core validates the
 complete request and combined response size before copying any record data.
 See [`modbus-fc20-read-file-record.md`](modbus-fc20-read-file-record.md).
+
+## FC21 Write File Record
+
+FC21 uses the same configured application-owned file map as FC20. The shared
+PDU engine validates every variable-length subrequest, all file and record
+ranges, the complete request-data extent, and response capacity before changing
+any file data. Successful requests are applied in request order and return an
+exact request echo.
+
+The RTU wrapper accepts FC21 at broadcast address zero because it is write-only.
+Broadcast data is validated and applied, while the response is suppressed. See
+[`modbus-fc21-write-file-record.md`](modbus-fc21-write-file-record.md).
 
 ## FC43/14 Read Device Identification
 

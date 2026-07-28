@@ -21,11 +21,12 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus FC23 shared/RTU/TCP/master tests | Pass |
 | Modbus FC43/14 device-identification tests | Pass |
 | Modbus FC20 Read File Record tests | Pass |
+| Modbus FC21 Write File Record tests | Pass |
 | Modbus RTU 50 us timing/state tests | Pass |
 | Modbus TCP ADU regression tests | Pass |
 | POSIX TCP integration smoke test | Pass |
 | lwIP transport compile check | Pass |
-| CMake configure/build/CTest (13 tests) | Pass |
+| CMake configure/build/CTest (14 tests) | Pass |
 | SVG XML validation and PNG rendering | Pass |
 
 The strict warning set is:
@@ -39,7 +40,7 @@ The strict warning set is:
 The host RTU suite verifies:
 
 - CRC calculation, wire byte order, and corruption rejection
-- all ordinary supported function codes, including FC23, through RTU framing
+- all ordinary supported function codes, including FC21 and FC23, through RTU framing
 - normal and exception response CRCs
 - configurable slave addressing
 - silent discard of wrong-address and invalid-CRC frames
@@ -57,21 +58,22 @@ The host RTU suite verifies:
 
 ## RTU master coverage
 
-The host RTU master plus dedicated FC20, FC23, and FC43/14 suites verify:
+The host RTU master plus dedicated FC20, FC21, FC23, and FC43/14 suites verify:
 
-- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC20, FC23, and FC43/14 request generation
+- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC20, FC21, FC23, and FC43/14 request generation
 - low-byte-first request CRC generation
 - unicast requests and broadcast-write behavior
 - quantity, value, capacity, and 16-bit address-range validation
-- maximum-size FC0F, FC10, and FC23 requests
+- maximum-size FC0F, FC10, FC20, FC21, and FC23 requests
 - complete response length, CRC, address, and function validation
 - Modbus exception response decoding
 - exact read byte-count validation
 - zero-valued unused packed-bit padding
 - exact single-write address/value acknowledgements
 - exact multiple-write address/quantity acknowledgements
+- exact FC21 complete-request echo validation
 - exact FC23 response byte-count and length validation
-- zero-copy bit, register, and device-identification object decoding with index validation
+- zero-copy bit, register, FC20 subresponse, and device-identification object decoding with index validation
 - malformed response and API argument rejection
 
 ## FC20 Read File Record coverage
@@ -91,6 +93,27 @@ The dedicated FC20 suite verifies:
 - zero-copy subresponse and register decoders
 - Modbus exception and malformed-response handling
 - master transaction-engine request checks and successful completion
+
+## FC21 Write File Record coverage
+
+The dedicated FC21 suite verifies:
+
+- reuse of the fixed-capacity application-owned file descriptor map
+- exact request echo after successful writes
+- complete validation of all subrequests before any record is modified
+- reference type 6, file-number, record-number, record-length, and data validation
+- multiple variable-length subrequests and deterministic request-order writes
+- overlapping subrequests with later values taking precedence
+- insufficient response-capacity handling without modifying file data
+- maximum 251-byte request data, 253-byte PDU, and 256-byte RTU ADU
+- Modbus TCP and Modbus RTU unicast processing
+- RTU broadcast writes with response suppression
+- invalid broadcast requests without partial writes
+- RTU master request generation, big-endian data encoding, and CRC
+- unicast and broadcast master request descriptors
+- request-ADU-aware exact response validation
+- Modbus exception and acknowledgement-mismatch handling
+- master transaction-engine validation and unicast/broadcast completion
 
 ## FC23 coverage
 
@@ -189,7 +212,7 @@ The portable RTU byte-receive/timing state machine, fixed 50 microsecond tick AP
 
 A final STM32 firmware ELF/BIN/HEX cannot be produced without board-specific STM32CubeMX output for the selected MCU and board, including startup code, linker script, HAL/CMSIS, Ethernet MAC/PHY configuration, UART configuration, and generated lwIP port files.
 
-Integration and current RTU scope are documented in `README.md`, `docs/modbus-fc23.md`, `docs/modbus-fc43-device-identification.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-diagnostics.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
+Integration and current RTU scope are documented in `README.md`, `docs/modbus-fc20-read-file-record.md`, `docs/modbus-fc21-write-file-record.md`, `docs/modbus-fc23.md`, `docs/modbus-fc43-device-identification.md`, `docs/modbus-rtu-core.md`, `docs/modbus-rtu-master-core.md`, `docs/modbus-rtu-master-transaction.md`, `docs/modbus-rtu-diagnostics.md`, `docs/modbus-rtu-timing.md`, and `Examples/stm32_cube_main.c`.
 
 The transaction engine is host verified and integrated into the STM32F767 TTL-UART example as a selectable eight-function candidate. The updated project was externally rebuilt with ArmClang 6.22 with zero errors and zero warnings. FC01, FC02, FC03, and FC04 are externally hardware validated. FC05, FC06, FC0F, and FC10 remain host verified with external hardware validation pending because the available slave software could not execute the write requests.
 

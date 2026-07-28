@@ -88,7 +88,64 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
         return 0;
     }
 
-    if (request->function == MBRTUM_FC_READ_FILE_RECORD) {
+    if (request->function == MBRTUM_FC_WRITE_FILE_RECORD) {
+        size_t request_data_length = request->start_address;
+        size_t subrequest_count = 0u;
+        size_t offset = 3u;
+        size_t data_end;
+        uint8_t expected_response = (uint8_t)(
+            request->slave_address != MODBUS_RTU_BROADCAST_ADDRESS);
+
+        if (request_data_length < 9u ||
+            request_data_length >
+                MB_FILE_RECORD_WRITE_REQUEST_DATA_MAX ||
+            request->quantity == 0u ||
+            request->quantity > MB_FILE_RECORD_WRITE_MAX_SUBREQUESTS ||
+            request->value != 0u ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u ||
+            request->expects_response != expected_response ||
+            adu_length != 5u + request_data_length ||
+            adu[2] != (uint8_t)request_data_length) {
+            return 0;
+        }
+
+        data_end = adu_length - MODBUS_RTU_CRC_SIZE;
+        while (offset < data_end) {
+            uint16_t file_number;
+            uint16_t record_number;
+            uint16_t record_length;
+            size_t subrequest_length;
+
+            if (data_end - offset < 7u ||
+                adu[offset] != MB_FILE_RECORD_REFERENCE_TYPE) {
+                return 0;
+            }
+            file_number = (uint16_t)(((uint16_t)adu[offset + 1u] << 8u) |
+                                     adu[offset + 2u]);
+            record_number =
+                (uint16_t)(((uint16_t)adu[offset + 3u] << 8u) |
+                           adu[offset + 4u]);
+            record_length =
+                (uint16_t)(((uint16_t)adu[offset + 5u] << 8u) |
+                           adu[offset + 6u]);
+            if (file_number == 0u || record_length == 0u ||
+                record_number >= MB_FILE_RECORD_MAX_RECORDS_PER_FILE ||
+                (uint32_t)record_number + (uint32_t)record_length >
+                    MB_FILE_RECORD_MAX_RECORDS_PER_FILE) {
+                return 0;
+            }
+            subrequest_length = 7u + ((size_t)record_length * 2u);
+            if (subrequest_length > data_end - offset) {
+                return 0;
+            }
+            offset += subrequest_length;
+            ++subrequest_count;
+        }
+        if (offset != data_end || subrequest_count != request->quantity) {
+            return 0;
+        }
+    } else if (request->function == MBRTUM_FC_READ_FILE_RECORD) {
         size_t request_data_length = request->start_address;
         size_t response_data_length = 0u;
         size_t subrequest_count = 0u;
