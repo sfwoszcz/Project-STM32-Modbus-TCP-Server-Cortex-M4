@@ -20,11 +20,12 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus RTU diagnostics tests | Pass |
 | Modbus FC23 shared/RTU/TCP/master tests | Pass |
 | Modbus FC43/14 device-identification tests | Pass |
+| Modbus FC20 Read File Record tests | Pass |
 | Modbus RTU 50 us timing/state tests | Pass |
 | Modbus TCP ADU regression tests | Pass |
 | POSIX TCP integration smoke test | Pass |
 | lwIP transport compile check | Pass |
-| CMake configure/build/CTest (12 tests) | Pass |
+| CMake configure/build/CTest (13 tests) | Pass |
 | SVG XML validation and PNG rendering | Pass |
 
 The strict warning set is:
@@ -56,9 +57,9 @@ The host RTU suite verifies:
 
 ## RTU master coverage
 
-The host RTU master plus dedicated FC23 and FC43/14 suites verify:
+The host RTU master plus dedicated FC20, FC23, and FC43/14 suites verify:
 
-- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC23, and FC43/14 request generation
+- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC20, FC23, and FC43/14 request generation
 - low-byte-first request CRC generation
 - unicast requests and broadcast-write behavior
 - quantity, value, capacity, and 16-bit address-range validation
@@ -72,6 +73,24 @@ The host RTU master plus dedicated FC23 and FC43/14 suites verify:
 - exact FC23 response byte-count and length validation
 - zero-copy bit, register, and device-identification object decoding with index validation
 - malformed response and API argument rejection
+
+## FC20 Read File Record coverage
+
+The dedicated FC20 suite verifies:
+
+- fixed-capacity file descriptor configuration and clearing
+- failed configuration preserving the active map
+- application-owned record data without heap allocation
+- multiple seven-byte subrequests and sequential record ranges
+- exact response subresponse lengths and reference type 6
+- shared PDU, Modbus TCP, and Modbus RTU processing
+- invalid request lengths, byte counts, reference types, files, and ranges
+- maximum 35-subrequest requests and 121-register single reads
+- RTU master request generation and CRC
+- request-ADU-aware master response validation
+- zero-copy subresponse and register decoders
+- Modbus exception and malformed-response handling
+- master transaction-engine request checks and successful completion
 
 ## FC23 coverage
 
@@ -164,7 +183,7 @@ The host transaction suite verifies:
 
 ## Scope
 
-The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics subsystem, fixed-capacity FC43/14 device-identification object model, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
+The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics subsystem, fixed-capacity FC43/14 device-identification object model, fixed-capacity application file-record map, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
 
 The portable RTU byte-receive/timing state machine, fixed 50 microsecond tick API, T1.5/T3.5 frame detection, buffering, and recovery are host verified. The STM32 UART/timer adapter and physical hardware validation remain outside this stage.
 

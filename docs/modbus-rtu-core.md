@@ -124,6 +124,19 @@ See [`modbus-rtu-timing.md`](modbus-rtu-timing.md) for timing calculations, buff
 - Modbus Application Protocol Specification V1.1b3: <https://www.modbus.org/file/secure/modbusprotocolspecification.pdf>
 - Modbus Serial Line Protocol and Implementation Guide V1.02: <https://www.modbus.org/file/secure/modbusoverserial.pdf>
 
+## FC20 Read File Record
+
+FC20 is processed by the shared PDU engine and is therefore available through
+both Modbus TCP and Modbus RTU. Applications configure up to
+`MB_FILE_RECORD_MAX_FILES` descriptors with file number, record pointer, and
+record count. The descriptors are copied into fixed-capacity state, while the
+record arrays remain application-owned.
+
+Each request contains one or more seven-byte subrequests with reference type
+`0x06`, file number, record number, and register count. The core validates the
+complete request and combined response size before copying any record data.
+See [`modbus-fc20-read-file-record.md`](modbus-fc20-read-file-record.md).
+
 ## FC43/14 Read Device Identification
 
 FC43/14 is processed by the shared PDU engine and is therefore available to

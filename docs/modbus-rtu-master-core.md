@@ -25,7 +25,7 @@ Implemented now:
 - zero-valued unused padding validation for packed-bit responses
 - exact single-write address/value acknowledgement validation
 - exact multiple-write address/quantity acknowledgement validation
-- zero-copy bit, register, and FC43/14 object access helpers
+- zero-copy bit, register, FC20 subresponse, and FC43/14 object access helpers
 - strict host tests and integration with Make, CMake, and CTest
 - no dynamic allocation
 
@@ -82,6 +82,7 @@ validation.
 | `06` | Write Single Holding Register | one register | echoed address and value |
 | `0F` | Write Multiple Coils | 1 to 1968 coils | echoed address and quantity |
 | `10` | Write Multiple Holding Registers | 1 to 123 registers | echoed address and quantity |
+| `14` | Read File Record | 35 subrequests; combined response data <= 245 bytes | file subresponses |
 | `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
 | `2B/0E` | Read Device Identification | Basic/Regular/Extended/Specific | segmented object list |
 
@@ -254,6 +255,22 @@ For FC01 and FC02 responses, the validator rejects a frame when unused high
 bits in the final packed byte are nonzero. This strict check prevents malformed
 packed-bit data from being accepted.
 
+## FC20 requests
+
+`mbrtum_build_read_file_record_request()` accepts up to 35 fixed-size
+subrequest descriptors. It validates file number, record range, request-data
+length, combined expected response-data length, output capacity, and CRC. The
+request descriptor stores the request byte count, expected response byte
+count, and subrequest count.
+
+FC20 response validation requires
+`mbrtum_process_response_with_request_adu()` so every returned subresponse
+length can be checked against its original requested register count.
+`mbrtum_get_file_record_response()`,
+`mbrtum_get_file_record_subresponse()`, and
+`mbrtum_get_file_record_register()` provide bounded zero-copy decoding. See
+[`modbus-fc20-read-file-record.md`](modbus-fc20-read-file-record.md).
+
 ## FC23 requests
 
 `mbrtum_build_read_write_multiple_registers_request()` records the read range in
@@ -282,7 +299,7 @@ The transport must transmit the request and must not wait for a response.
 Calling `mbrtum_process_response()` with a broadcast request returns
 `MBRTUM_ERROR_RESPONSE_NOT_EXPECTED`.
 
-Read builders and the FC23 builder reject address zero.
+Read builders, including FC20 and FC23, reject address zero.
 
 ## Modbus exception responses
 
@@ -364,6 +381,7 @@ The following objects must not overlap:
 - request ADU length object
 - FC0F packed-value input
 - FC10 and FC23 register-value input
+- FC20 subrequest descriptor input
 
 For response processing, these objects must not overlap:
 
@@ -376,16 +394,17 @@ remains unchanged.
 
 ## Host verification
 
-`Tests/host/test_modbus_rtu_master.c` and
+`Tests/host/test_modbus_rtu_master.c`,
+`Tests/host/test_modbus_fc20.c`, and
 `Tests/host/test_modbus_fc23.c` verify:
 
-- all ordinary supported request builders, including FC23
+- all ordinary supported request builders, including FC20 and FC23
 - known request field layouts and generated CRCs
 - unicast and broadcast behavior
-- maximum FC0F, FC10, and FC23 request sizes
+- maximum FC0F, FC10, FC20, and FC23 request sizes
 - output-capacity failures
 - address-range overflow rejection
-- normal bit, register, and FC23 response decoding
+- normal bit, register, FC20 subresponse, and FC23 response decoding
 - index validation
 - Modbus exception responses
 - invalid exception code and exception length rejection
@@ -412,24 +431,16 @@ cmake --build build --clean-first
 ctest --test-dir build --output-on-failure
 ```
 
-The CTest suite includes dedicated `rtu_master`, `fc23`, and
+The CTest suite includes dedicated `rtu_master`, `fc20`, `fc23`, and
 `fc43_device_id` tests.
 
-## Next stage
+## Transport boundary
 
-The next portable stage should wrap this complete-frame core with a master
-transaction engine that owns:
-
-- request transmission state
-- response deadline tracking
-- timeout reporting
-- configurable retries
-- matching one response to one outstanding request
-- transport completion and error callbacks
-
-STM32 UART reception, timer integration, and RS-485 DE/RE direction control
-should remain in board-specific adapters above that portable transaction
-engine.
+The complete-frame core intentionally excludes UART handling, response timers,
+retry scheduling, and RS-485 direction control. The portable transaction engine
+adds request ownership, deadlines, retries, and transport events above this
+layer. STM32 UART reception, timer integration, and RS-485 DE/RE control remain
+in board-specific adapters.
 
 ## FC43/14 Device Identification
 

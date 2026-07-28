@@ -3,6 +3,7 @@
 
 #include "modbus_rtu.h"
 #include "modbus_device_id.h"
+#include "modbus_file_record.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -24,6 +25,7 @@ extern "C" {
 #define MBRTUM_FC_GET_COMM_EVENT_LOG                MBRTU_FC_GET_COMM_EVENT_LOG
 #define MBRTUM_FC_WRITE_MULTIPLE_COILS             0x0Fu
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
+#define MBRTUM_FC_READ_FILE_RECORD                  MB_FILE_RECORD_READ_FUNCTION_CODE
 #define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
 #define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MB_DEVICE_ID_FUNCTION_CODE
 
@@ -68,8 +70,10 @@ extern "C" {
  *
  * value contains the encoded FC05 coil value (0xFF00 or 0x0000) or the FC06
  * register value. For FC08, start_address stores the subfunction and quantity
- * stores the diagnostic data length in bytes. For FC23, start_address and
- * quantity describe the read range, while write_start_address and
+ * stores the diagnostic data length in bytes. For FC20, start_address stores
+ * the request data byte count, quantity stores the expected response data byte
+ * count, and value stores the number of subrequests. For FC23, start_address
+ * and quantity describe the read range, while write_start_address and
  * write_quantity describe the write range. For FC43/14, start_address stores
  * the Read Device ID code, quantity stores the requested object ID, and value
  * stores the MEI type 0x0E. These fields remain zero for FC07, FC0B, and FC0C.
@@ -142,6 +146,28 @@ typedef struct {
     const uint8_t *value;
     size_t value_length;
 } mbrtum_device_id_object_t;
+
+/** One FC20 read-file-record subrequest. */
+typedef struct {
+    uint16_t file_number;
+    uint16_t record_number;
+    uint16_t record_length;
+} mbrtum_file_record_request_t;
+
+/** Decoded zero-copy FC20 response view. */
+typedef struct {
+    size_t subresponse_count;
+    const uint8_t *subresponses;
+    size_t subresponses_length;
+} mbrtum_file_record_response_t;
+
+/** One zero-copy FC20 subresponse. */
+typedef struct {
+    uint8_t reference_type;
+    const uint8_t *record_data;
+    size_t record_data_length;
+    uint16_t record_length;
+} mbrtum_file_record_subresponse_t;
 
 /**
  * Storage and overlap requirements.
@@ -277,6 +303,23 @@ int mbrtum_build_read_write_multiple_registers_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC20 Read File Record RTU request ADU.
+ *
+ * slave_address must be 1-247. subrequest_count must be 1-35. Each
+ * subrequest uses reference type 6, file_number 1-65535, record_number
+ * 0-9999, and a non-zero record_length. The combined expected response data
+ * must not exceed 245 bytes.
+ */
+int mbrtum_build_read_file_record_request(
+    uint8_t slave_address,
+    const mbrtum_file_record_request_t *subrequests,
+    size_t subrequest_count,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC43/14 Read Device Identification RTU request ADU.
  *
  * slave_address must be 1-247. read_device_id_code must be one of Basic,
@@ -340,8 +383,9 @@ int mbrtum_build_get_comm_event_log_request(
  * Validate a response while also supplying the original request ADU.
  *
  * This form is required for FC08 so echoed diagnostic data can be compared
- * byte-for-byte. It also supports all ordinary requests, FC07/FC0B/FC0C, and
- * FC23.
+ * byte-for-byte. This form is also required for FC20 so each subresponse can
+ * be validated against its original subrequest. It supports all ordinary
+ * requests, FC07/FC0B/FC0C, FC23, and FC43/14.
  */
 int mbrtum_process_response_with_request_adu(
     const mbrtum_request_t *request,
@@ -421,6 +465,23 @@ int mbrtum_get_comm_event_log(const mbrtum_response_t *response,
 int mbrtum_get_diagnostic_event(const mbrtum_comm_event_log_t *event_log,
                                 size_t index,
                                 uint8_t *event);
+
+/** Decode a validated FC20 response into a zero-copy view. */
+int mbrtum_get_file_record_response(
+    const mbrtum_response_t *response,
+    mbrtum_file_record_response_t *file_record_response);
+
+/** Extract one FC20 subresponse by zero-based index. */
+int mbrtum_get_file_record_subresponse(
+    const mbrtum_file_record_response_t *file_record_response,
+    size_t index,
+    mbrtum_file_record_subresponse_t *subresponse);
+
+/** Read one register from a decoded FC20 subresponse. */
+int mbrtum_get_file_record_register(
+    const mbrtum_file_record_subresponse_t *subresponse,
+    uint16_t index,
+    uint16_t *value);
 
 /** Decode a validated FC43/14 response into a zero-copy view. */
 int mbrtum_get_device_id_response(

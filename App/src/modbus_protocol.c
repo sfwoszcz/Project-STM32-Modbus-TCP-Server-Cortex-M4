@@ -5,6 +5,8 @@
 #include "modbus.h"
 #include "modbus_device_id.h"
 #include "modbus_device_id_internal.h"
+#include "modbus_file_record.h"
+#include "modbus_file_record_internal.h"
 #include "platform_port.h"
 
 #include <string.h>
@@ -198,6 +200,13 @@ static uint8_t process_pdu_function(const uint8_t *pdu,
         write_be16(&response[3], quantity);
         *response_len = 5u;
         return 0u;
+
+    case MB_FILE_RECORD_READ_FUNCTION_CODE: /* Read File Record */
+        return mb_file_record_process_read_request(pdu,
+                                                   pdu_len,
+                                                   response,
+                                                   response_capacity,
+                                                   response_len);
 
     case 0x17u: { /* Read/Write Multiple Holding Registers */
         uint16_t read_address;
