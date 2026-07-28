@@ -208,6 +208,13 @@ static uint8_t process_pdu_function(const uint8_t *pdu,
                                                    response_capacity,
                                                    response_len);
 
+    case MB_FILE_RECORD_WRITE_FUNCTION_CODE: /* Write File Record */
+        return mb_file_record_process_write_request(pdu,
+                                                    pdu_len,
+                                                    response,
+                                                    response_capacity,
+                                                    response_len);
+
     case 0x17u: { /* Read/Write Multiple Holding Registers */
         uint16_t read_address;
         uint16_t read_quantity;

@@ -46,8 +46,7 @@ The platform later calls `mbrtum_transaction_on_tx_complete()` or
 `mbrtum_transaction_on_tx_error()`.
 
 A request whose descriptor says that no response is expected completes after
-transmit completion and never starts a response deadline. Broadcast writes are
-the current use of this behavior; the transaction layer does not hard-code a
+transmit completion and never starts a response deadline. Broadcast writes, including FC21, use this behavior; the transaction layer does not hard-code a
 specific function code.
 
 ## FC20 support
@@ -58,6 +57,18 @@ request byte count, subrequest count, every reference/file/record field,
 combined expected response size, exact ADU length, response expectation, and
 CRC against the immutable request descriptor. Response validation uses the
 transaction-owned request ADU to match each returned subresponse length.
+
+## FC21 support
+
+The transaction engine accepts FC21 requests produced by
+`mbrtum_build_write_file_record_request()`. Before transmission it checks the
+request-data byte count, variable subrequest boundaries, reference/file/record
+fields, record-data extents, subrequest count, response expectation, exact ADU
+length, and CRC against the immutable request descriptor.
+
+Unicast responses are matched byte-for-byte against the transaction-owned
+request ADU. Broadcast FC21 requests complete after transmit completion and do
+not start a response deadline.
 
 ## FC23 support
 

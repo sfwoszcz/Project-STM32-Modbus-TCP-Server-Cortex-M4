@@ -87,8 +87,8 @@ Descriptors must be sorted by strictly increasing file number. Failed
 configuration leaves the previous map unchanged. `mb_init()` and
 `mb_file_record_clear()` clear the configured map.
 
-The record pointer is writable so the same map can be extended later for FC21
-Write File Record without replacing the public storage model.
+The same writable application-owned record arrays are used by FC21 Write File
+Record. See `docs/modbus-fc21-write-file-record.md`.
 
 ## Slave/server processing
 

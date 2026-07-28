@@ -26,6 +26,7 @@ extern "C" {
 #define MBRTUM_FC_WRITE_MULTIPLE_COILS             0x0Fu
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
 #define MBRTUM_FC_READ_FILE_RECORD                  MB_FILE_RECORD_READ_FUNCTION_CODE
+#define MBRTUM_FC_WRITE_FILE_RECORD                 MB_FILE_RECORD_WRITE_FUNCTION_CODE
 #define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
 #define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MB_DEVICE_ID_FUNCTION_CODE
 
@@ -72,7 +73,9 @@ extern "C" {
  * register value. For FC08, start_address stores the subfunction and quantity
  * stores the diagnostic data length in bytes. For FC20, start_address stores
  * the request data byte count, quantity stores the expected response data byte
- * count, and value stores the number of subrequests. For FC23, start_address
+ * count, and value stores the number of subrequests. For FC21, start_address
+ * stores the echoed request data byte count and quantity stores the number of
+ * subrequests. For FC23, start_address
  * and quantity describe the read range, while write_start_address and
  * write_quantity describe the write range. For FC43/14, start_address stores
  * the Read Device ID code, quantity stores the requested object ID, and value
@@ -153,6 +156,14 @@ typedef struct {
     uint16_t record_number;
     uint16_t record_length;
 } mbrtum_file_record_request_t;
+
+/** One FC21 write-file-record subrequest. */
+typedef struct {
+    uint16_t file_number;
+    uint16_t record_number;
+    uint16_t record_length;
+    const uint16_t *record_data;
+} mbrtum_write_file_record_request_t;
 
 /** Decoded zero-copy FC20 response view. */
 typedef struct {
@@ -320,6 +331,25 @@ int mbrtum_build_read_file_record_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC21 Write File Record RTU request ADU.
+ *
+ * slave_address may be 0 for broadcast or 1-247 for unicast.
+ * subrequest_count must be 1-27. Each subrequest uses reference type 6,
+ * file_number 1-65535, record_number 0-9999, and a non-zero record_length.
+ * record_data contains record_length host-endian uint16_t values encoded in
+ * big-endian Modbus wire order. The total request-data length must not exceed
+ * 251 bytes. Each record_data array must not overlap request_adu.
+ */
+int mbrtum_build_write_file_record_request(
+    uint8_t slave_address,
+    const mbrtum_write_file_record_request_t *subrequests,
+    size_t subrequest_count,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC43/14 Read Device Identification RTU request ADU.
  *
  * slave_address must be 1-247. read_device_id_code must be one of Basic,
@@ -383,9 +413,10 @@ int mbrtum_build_get_comm_event_log_request(
  * Validate a response while also supplying the original request ADU.
  *
  * This form is required for FC08 so echoed diagnostic data can be compared
- * byte-for-byte. This form is also required for FC20 so each subresponse can
- * be validated against its original subrequest. It supports all ordinary
- * requests, FC07/FC0B/FC0C, FC23, and FC43/14.
+ * byte-for-byte. It is also required for FC20 so each subresponse can be
+ * validated against its original subrequest and for FC21 so the complete
+ * response echo can be matched against the original request. It supports all
+ * ordinary requests, FC07/FC0B/FC0C, FC23, and FC43/14.
  */
 int mbrtum_process_response_with_request_adu(
     const mbrtum_request_t *request,
@@ -404,9 +435,12 @@ int mbrtum_process_response_with_request_adu(
  * - slave address;
  * - normal or exception function code;
  * - exact read byte count and zero-valued unused packed-bit padding;
- * - exact write acknowledgement address, quantity, or value.
+ * - exact write acknowledgement address, quantity, value, or FC21 request
+ *   echo.
  *
  * For broadcast requests, MBRTUM_ERROR_RESPONSE_NOT_EXPECTED is returned.
+ * FC08, FC20, and FC21 require
+ * mbrtum_process_response_with_request_adu() for normal responses.
  *
  * @return MBRTUM_OK for a normal validated response,
  *         MBRTUM_EXCEPTION_RESPONSE for a validated Modbus exception response,
