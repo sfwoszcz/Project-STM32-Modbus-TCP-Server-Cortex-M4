@@ -197,6 +197,54 @@ static uint8_t process_pdu_function(const uint8_t *pdu,
         *response_len = 5u;
         return 0u;
 
+    case 0x17u: { /* Read/Write Multiple Holding Registers */
+        uint16_t read_address;
+        uint16_t read_quantity;
+        uint16_t write_address;
+        uint16_t write_quantity;
+        size_t write_byte_count;
+        size_t read_byte_count;
+
+        if (pdu_len < 10u) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        read_address = read_be16(&pdu[1]);
+        read_quantity = read_be16(&pdu[3]);
+        write_address = read_be16(&pdu[5]);
+        write_quantity = read_be16(&pdu[7]);
+        if (read_quantity == 0u || read_quantity > 125u ||
+            write_quantity == 0u || write_quantity > 121u) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        if (!range_is_valid(read_address, read_quantity, MB_MAX_HREGS) ||
+            !range_is_valid(write_address, write_quantity, MB_MAX_HREGS)) {
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+        write_byte_count = (size_t)write_quantity * 2u;
+        if ((size_t)pdu[9] != write_byte_count ||
+            pdu_len != 10u + write_byte_count) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        read_byte_count = (size_t)read_quantity * 2u;
+        if (response_capacity < 2u + read_byte_count) {
+            return MB_EX_SERVER_FAILURE;
+        }
+
+        for (uint16_t i = 0u; i < write_quantity; ++i) {
+            mb_set_hreg((uint16_t)(write_address + i),
+                        read_be16(&pdu[10u + ((size_t)i * 2u)]));
+        }
+
+        response[0] = function;
+        response[1] = (uint8_t)read_byte_count;
+        for (uint16_t i = 0u; i < read_quantity; ++i) {
+            write_be16(&response[2u + ((size_t)i * 2u)],
+                       mb_get_hreg((uint16_t)(read_address + i)));
+        }
+        *response_len = 2u + read_byte_count;
+        return 0u;
+    }
+
     default:
         return MB_EX_ILLEGAL_FUNCTION;
     }

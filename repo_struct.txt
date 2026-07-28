@@ -28,10 +28,22 @@ stm32-modbus-tcp-server/
 │   └── stm32_cube_main.c
 ├── Tests/
 │   ├── host/
+│   │   ├── ci_modbus_smoke.py
+│   │   ├── register_selftest_runner.c
+│   │   ├── test_modbus_crc16.c
+│   │   ├── test_modbus_fc23.c
+│   │   ├── test_modbus_pdu.c
+│   │   ├── test_modbus_protocol.c
+│   │   ├── test_modbus_rtu.c
+│   │   ├── test_modbus_rtu_diagnostics.c
+│   │   ├── test_modbus_rtu_master.c
+│   │   ├── test_modbus_rtu_master_transaction.c
+│   │   └── test_modbus_rtu_timing.c
 │   ├── mocks/lwip/
 │   └── stm32/
 ├── docs/
 │   ├── images/
+│   ├── modbus-fc23.md
 │   ├── modbus-rtu-core.md
 │   ├── modbus-rtu-master-core.md
 │   ├── modbus-rtu-master-transaction.md

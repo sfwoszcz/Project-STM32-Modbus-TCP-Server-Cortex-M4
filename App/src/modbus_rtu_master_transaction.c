@@ -88,7 +88,39 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
         return 0;
     }
 
-    if (request->function == MBRTUM_FC_DIAGNOSTICS) {
+    if (request->function == MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS) {
+        size_t expected_byte_count;
+        size_t expected_length;
+
+        if (request->slave_address == MODBUS_RTU_BROADCAST_ADDRESS ||
+            request->expects_response != 1u || request->value != 0u ||
+            request->quantity == 0u || request->quantity > 125u ||
+            request->write_quantity == 0u ||
+            request->write_quantity > 121u ||
+            (uint32_t)request->start_address +
+                    (uint32_t)request->quantity >
+                65536u ||
+            (uint32_t)request->write_start_address +
+                    (uint32_t)request->write_quantity >
+                65536u) {
+            return 0;
+        }
+
+        expected_byte_count = (size_t)request->write_quantity * 2u;
+        expected_length = 13u + expected_byte_count;
+        if (adu_length != expected_length ||
+            adu[2] != (uint8_t)(request->start_address >> 8u) ||
+            adu[3] != (uint8_t)request->start_address ||
+            adu[4] != (uint8_t)(request->quantity >> 8u) ||
+            adu[5] != (uint8_t)request->quantity ||
+            adu[6] != (uint8_t)(request->write_start_address >> 8u) ||
+            adu[7] != (uint8_t)request->write_start_address ||
+            adu[8] != (uint8_t)(request->write_quantity >> 8u) ||
+            adu[9] != (uint8_t)request->write_quantity ||
+            (size_t)adu[10] != expected_byte_count) {
+            return 0;
+        }
+    } else if (request->function == MBRTUM_FC_DIAGNOSTICS) {
         uint16_t request_data = 0u;
         uint8_t expected_response = (uint8_t)(
             request->slave_address != MODBUS_RTU_BROADCAST_ADDRESS &&

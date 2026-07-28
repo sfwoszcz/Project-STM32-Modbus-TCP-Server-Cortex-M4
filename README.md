@@ -41,10 +41,10 @@ A GitHub Actions workflow and a Docker build are included.
 
 The design separates the shared PDU engine from transport framing and network I/O:
 
-- `mb_process_pdu()` dispatches function codes and creates normal or exception response PDUs without TCP-specific framing.
+- `mb_process_pdu()` dispatches shared function codes, including FC23 Read/Write Multiple Registers, and creates normal or exception response PDUs without TCP-specific framing.
 - `mbtcp_process_adu()` validates MBAP fields, invokes the shared PDU API, and builds the Modbus TCP response ADU.
 - `mbrtu_process_adu()` preserves the ordinary-function RTU path, while `mbrtu_process_adu_with_diagnostics()` adds a separate RTU-only dispatcher for FC07, FC08, FC0B, and FC0C.
-- `mbrtum_build_*_request()` creates complete RTU master requests; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
+- `mbrtum_build_*_request()` creates complete RTU master requests, including FC23; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
 - `mbrtum_transaction_*()` owns one active request, drives asynchronous transmit/wait/retry states, enforces wrap-safe deadlines, reuses the complete-frame master validator, and exposes bounded diagnostics.
 - `mbrtu_on_rx_byte_isr()` and `mbrtu_on_50us_tick_isr()` assemble frames with minimal interrupt work; `mbrtu_poll()` processes and transmits them from the main loop.
 - `mb_crc16()` implements the Modbus serial-line CRC-16 with low-byte-first wire order.
@@ -68,8 +68,15 @@ The design separates the shared PDU engine from transport framing and network I/
 | Get Communication Event Log | `0x0C` | 64 event bytes | RTU only |
 | Write Multiple Coils | `0x0F` | 1,968 bits | TCP and RTU |
 | Write Multiple Registers | `0x10` | 123 registers | TCP and RTU |
+| Read/Write Multiple Registers | `0x17` | Read 125, write 121 registers | TCP and RTU |
 
 Illegal functions, addresses, quantities, byte counts, and values produce standard Modbus exception responses. Serial-line-only diagnostics are deliberately absent from the Modbus TCP dispatcher and return Illegal Function over TCP.
+
+FC23 performs its write before its read, including when the ranges overlap. The
+shared PDU implementation validates the entire request and normal-response
+capacity before applying any write. See
+[`docs/modbus-fc23.md`](docs/modbus-fc23.md) for the wire format, limits, master
+API, transport behavior, and test coverage.
 
 ## Repository layout
 
@@ -108,10 +115,12 @@ Examples/
 
 Tests/
 ├── host/                     Unit, transaction, and socket-level tests
+│   └── test_modbus_fc23.c    Dedicated FC23 shared/RTU/TCP/master tests
 ├── mocks/lwip/               Compile-check headers only
 └── stm32/                    Register-map self-test for a target board
 
 docs/
+├── modbus-fc23.md
 ├── modbus-rtu-core.md
 ├── modbus-rtu-master-core.md
 ├── modbus-rtu-master-transaction.md
@@ -140,6 +149,7 @@ modbus RTU legacy source-list test: PASS
 modbus RTU master tests: PASS
 modbus RTU master transaction tests: PASS
 modbus RTU diagnostics tests: PASS
+Modbus FC23 tests: PASS
 modbus RTU timing tests: PASS
 modbus protocol tests: PASS
 Modbus SelfTest: total=5, passed=5, failed=0, first_err=0
@@ -254,9 +264,10 @@ complete API, counter rules, broadcast behavior, master builders, and tests.
 ### Portable RTU master request and response core
 
 The separate master core builds complete FC01, FC02, FC03, FC04, FC05, FC06,
-FC0F, and FC10 request ADUs and validates one complete response against the
-original request descriptor. It checks CRC, address, function, byte count,
-packed-bit padding, write acknowledgements, and Modbus exception responses.
+FC0F, FC10, and FC23 request ADUs and validates one complete response against
+the original request descriptor. It checks CRC, address, function, byte count,
+packed-bit padding, write acknowledgements, FC23 read data, and Modbus
+exception responses.
 
 The complete-frame master core intentionally does not own UART framing,
 response timeouts, retries, STM32 HAL integration, or RS-485 direction control.

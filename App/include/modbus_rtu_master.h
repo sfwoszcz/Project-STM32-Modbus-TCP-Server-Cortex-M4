@@ -23,6 +23,7 @@ extern "C" {
 #define MBRTUM_FC_GET_COMM_EVENT_LOG                MBRTU_FC_GET_COMM_EVENT_LOG
 #define MBRTUM_FC_WRITE_MULTIPLE_COILS             0x0Fu
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
+#define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
 
 /* Common Modbus exception codes returned by a remote slave. */
 #define MBRTUM_EXCEPTION_ILLEGAL_FUNCTION          0x01u
@@ -65,7 +66,9 @@ extern "C" {
  *
  * value contains the encoded FC05 coil value (0xFF00 or 0x0000) or the FC06
  * register value. For FC08, start_address stores the subfunction and quantity
- * stores the diagnostic data length in bytes. These fields remain zero for
+ * stores the diagnostic data length in bytes. For FC23, start_address and
+ * quantity describe the read range, while write_start_address and
+ * write_quantity describe the write range. These fields remain zero for
  * FC07, FC0B, and FC0C.
  *
  * expects_response is zero for valid broadcast writes and for requests such
@@ -78,14 +81,16 @@ typedef struct {
     uint16_t quantity;
     uint16_t value;
     uint8_t expects_response;
+    uint16_t write_start_address;
+    uint16_t write_quantity;
 } mbrtum_request_t;
 
 /**
  * View of one validated Modbus RTU master response.
  *
  * data points into the caller-owned response ADU and remains valid only while
- * that ADU remains unchanged. For FC01-FC04 normal responses, data references
- * the packed-bit or register data bytes after the byte-count field.
+ * that ADU remains unchanged. For FC01-FC04 and FC23 normal responses, data
+ * references the packed-bit or register data bytes after the byte-count field.
  *
  * For successful write acknowledgements and exception responses, data is NULL
  * and data_length is zero.
@@ -230,6 +235,27 @@ int mbrtum_build_write_multiple_registers_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC23 Read/Write Multiple Holding Registers RTU request ADU.
+ *
+ * slave_address must be 1-247. read_quantity must be 1-125 and
+ * write_quantity must be 1-121. write_values contains write_quantity
+ * host-endian uint16_t values encoded in big-endian Modbus wire order.
+ * Both 16-bit address ranges are validated. Broadcast is not supported because
+ * FC23 requires a read response. write_values must not overlap request_adu.
+ */
+int mbrtum_build_read_write_multiple_registers_request(
+    uint8_t slave_address,
+    uint16_t read_start_address,
+    uint16_t read_quantity,
+    uint16_t write_start_address,
+    uint16_t write_quantity,
+    const uint16_t *write_values,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC07 Read Exception Status request.
  */
 int mbrtum_build_read_exception_status_request(
@@ -276,7 +302,8 @@ int mbrtum_build_get_comm_event_log_request(
  * Validate a response while also supplying the original request ADU.
  *
  * This form is required for FC08 so echoed diagnostic data can be compared
- * byte-for-byte. It also supports all ordinary requests and FC07/FC0B/FC0C.
+ * byte-for-byte. It also supports all ordinary requests, FC07/FC0B/FC0C, and
+ * FC23.
  */
 int mbrtum_process_response_with_request_adu(
     const mbrtum_request_t *request,
@@ -319,7 +346,8 @@ int mbrtum_get_bit(const mbrtum_request_t *request,
                    uint8_t *value);
 
 /**
- * Read one decoded FC03 or FC04 register from a validated normal response.
+ * Read one decoded FC03, FC04, or FC23 register from a validated normal
+ * response.
  *
  * index is zero-based within the quantity requested by request.
  */

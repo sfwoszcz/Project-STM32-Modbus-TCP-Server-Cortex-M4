@@ -51,6 +51,9 @@ target_link_libraries(modbus_rtu_master_transaction_tests PRIVATE modbus_tcp_cor
 add_executable(modbus_rtu_diagnostics_tests Tests/host/test_modbus_rtu_diagnostics.c)
 target_link_libraries(modbus_rtu_diagnostics_tests PRIVATE modbus_tcp_core)
 
+add_executable(modbus_fc23_tests Tests/host/test_modbus_fc23.c)
+target_link_libraries(modbus_fc23_tests PRIVATE modbus_tcp_core)
+
 add_executable(modbus_rtu_timing_tests Tests/host/test_modbus_rtu_timing.c)
 target_link_libraries(modbus_rtu_timing_tests PRIVATE modbus_tcp_core)
 
@@ -81,6 +84,7 @@ add_test(NAME rtu_legacy_link COMMAND modbus_rtu_legacy_link_tests)
 add_test(NAME rtu_master COMMAND modbus_rtu_master_tests)
 add_test(NAME rtu_master_transaction COMMAND modbus_rtu_master_transaction_tests)
 add_test(NAME rtu_diagnostics COMMAND modbus_rtu_diagnostics_tests)
+add_test(NAME fc23 COMMAND modbus_fc23_tests)
 add_test(NAME rtu_timing COMMAND modbus_rtu_timing_tests)
 add_test(NAME protocol COMMAND modbus_protocol_tests)
 add_test(NAME register_map COMMAND register_selftest)

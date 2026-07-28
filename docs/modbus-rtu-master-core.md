@@ -13,7 +13,7 @@ ADU, and exposes zero-copy helpers for decoded bit and register data.
 Implemented now:
 
 - request generation for function codes `01`, `02`, `03`, `04`, `05`, `06`,
-  `0F`, and `10`
+  `0F`, `10`, and `17`
 - Modbus CRC-16 generation in low-byte-first RTU wire order
 - unicast slave addresses from 1 through 247
 - broadcast writes at address 0
@@ -82,6 +82,7 @@ validation.
 | `06` | Write Single Holding Register | one register | echoed address and value |
 | `0F` | Write Multiple Coils | 1 to 1968 coils | echoed address and quantity |
 | `10` | Write Multiple Holding Registers | 1 to 123 registers | echoed address and quantity |
+| `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
 
 The request builders reject an address range whose final item would exceed
 Modbus address `65535`.
@@ -109,6 +110,8 @@ typedef struct {
     uint16_t quantity;
     uint16_t value;
     uint8_t expects_response;
+    uint16_t write_start_address;
+    uint16_t write_quantity;
 } mbrtum_request_t;
 ```
 
@@ -250,9 +253,18 @@ For FC01 and FC02 responses, the validator rejects a frame when unused high
 bits in the final packed byte are nonzero. This strict check prevents malformed
 packed-bit data from being accepted.
 
+## FC23 requests
+
+`mbrtum_build_read_write_multiple_registers_request()` records the read range in
+`start_address` and `quantity`, and the write range in
+`write_start_address` and `write_quantity`. The builder accepts only unicast
+addresses, encodes up to 121 write values, and can generate a maximum 255-byte
+RTU ADU. The normal response is decoded through `mbrtum_get_register()` using
+the requested read quantity. See [`modbus-fc23.md`](modbus-fc23.md).
+
 ## Broadcast writes
 
-Address zero is accepted only by the write builders:
+Address zero is accepted only by the write-only builders:
 
 - FC05
 - FC06
@@ -269,7 +281,7 @@ The transport must transmit the request and must not wait for a response.
 Calling `mbrtum_process_response()` with a broadcast request returns
 `MBRTUM_ERROR_RESPONSE_NOT_EXPECTED`.
 
-Read builders reject address zero.
+Read builders and the FC23 builder reject address zero.
 
 ## Modbus exception responses
 
@@ -350,7 +362,7 @@ The following objects must not overlap:
 - request ADU buffer
 - request ADU length object
 - FC0F packed-value input
-- FC10 register-value input
+- FC10 and FC23 register-value input
 
 For response processing, these objects must not overlap:
 
@@ -363,15 +375,16 @@ remains unchanged.
 
 ## Host verification
 
-`Tests/host/test_modbus_rtu_master.c` verifies:
+`Tests/host/test_modbus_rtu_master.c` and
+`Tests/host/test_modbus_fc23.c` verify:
 
-- all eight supported request builders
+- all ordinary supported request builders, including FC23
 - known request field layouts and generated CRCs
 - unicast and broadcast behavior
-- maximum FC0F and FC10 request sizes
+- maximum FC0F, FC10, and FC23 request sizes
 - output-capacity failures
 - address-range overflow rejection
-- normal bit and register response decoding
+- normal bit, register, and FC23 response decoding
 - index validation
 - Modbus exception responses
 - invalid exception code and exception length rejection
@@ -398,7 +411,7 @@ cmake --build build --clean-first
 ctest --test-dir build --output-on-failure
 ```
 
-The CTest suite contains seven tests, including `rtu_master`.
+The CTest suite includes dedicated `rtu_master` and `fc23` tests.
 
 ## Next stage
 
