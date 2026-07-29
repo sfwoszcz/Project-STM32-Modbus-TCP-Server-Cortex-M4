@@ -17,6 +17,10 @@ void mb_set_dinput(uint16_t address, uint8_t value);
 
 uint16_t mb_get_hreg(uint16_t address);
 void mb_set_hreg(uint16_t address, uint16_t value);
+/* Atomically apply the Modbus FC22 mask formula and return the new value. */
+uint16_t mb_mask_write_hreg(uint16_t address,
+                            uint16_t and_mask,
+                            uint16_t or_mask);
 uint16_t mb_get_ireg(uint16_t address);
 void mb_set_ireg(uint16_t address, uint16_t value);
 

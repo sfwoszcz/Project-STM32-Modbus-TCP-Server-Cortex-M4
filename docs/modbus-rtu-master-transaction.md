@@ -46,8 +46,9 @@ The platform later calls `mbrtum_transaction_on_tx_complete()` or
 `mbrtum_transaction_on_tx_error()`.
 
 A request whose descriptor says that no response is expected completes after
-transmit completion and never starts a response deadline. Broadcast writes, including FC21, use this behavior; the transaction layer does not hard-code a
-specific function code.
+transmit completion and never starts a response deadline. Broadcast writes,
+including FC21 and FC22, use this behavior; the transaction layer does not
+hard-code a specific function code.
 
 ## FC11 support
 
@@ -78,6 +79,15 @@ length, and CRC against the immutable request descriptor.
 Unicast responses are matched byte-for-byte against the transaction-owned
 request ADU. Broadcast FC21 requests complete after transmit completion and do
 not start a response deadline.
+
+## FC22 support
+
+The transaction engine accepts FC22 requests produced by
+`mbrtum_build_mask_write_register_request()`. Before transmission it validates
+the exact ten-byte ADU, register address, AND mask, OR mask, response
+expectation, and CRC against the immutable request descriptor. Unicast replies
+reuse the exact acknowledgement validator. Broadcast requests complete after
+transmit completion without starting a response deadline.
 
 ## FC23 support
 

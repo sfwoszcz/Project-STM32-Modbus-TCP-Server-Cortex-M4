@@ -768,6 +768,25 @@ void mb_set_hreg(uint16_t address, uint16_t value)
     mb_on_write_hreg(address, value);
 }
 
+uint16_t mb_mask_write_hreg(uint16_t address,
+                            uint16_t and_mask,
+                            uint16_t or_mask)
+{
+    uint16_t value;
+
+    if (address >= MB_MAX_HREGS) {
+        return 0u;
+    }
+
+    mb_lock();
+    value = (uint16_t)((holding_registers[address] & and_mask) |
+                       (or_mask & (uint16_t)~and_mask));
+    holding_registers[address] = value;
+    mb_unlock();
+    mb_on_write_hreg(address, value);
+    return value;
+}
+
 uint16_t mb_get_ireg(uint16_t address)
 {
     return address < MB_MAX_IREGS ? input_registers[address] : 0u;

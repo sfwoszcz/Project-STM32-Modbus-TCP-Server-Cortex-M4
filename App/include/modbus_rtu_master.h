@@ -29,6 +29,7 @@ extern "C" {
 #define MBRTUM_FC_WRITE_MULTIPLE_REGISTERS         0x10u
 #define MBRTUM_FC_READ_FILE_RECORD                  MB_FILE_RECORD_READ_FUNCTION_CODE
 #define MBRTUM_FC_WRITE_FILE_RECORD                 MB_FILE_RECORD_WRITE_FUNCTION_CODE
+#define MBRTUM_FC_MASK_WRITE_REGISTER              0x16u
 #define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
 #define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MB_DEVICE_ID_FUNCTION_CODE
 
@@ -77,8 +78,9 @@ extern "C" {
  * the request data byte count, quantity stores the expected response data byte
  * count, and value stores the number of subrequests. For FC21, start_address
  * stores the echoed request data byte count and quantity stores the number of
- * subrequests. For FC23, start_address
- * and quantity describe the read range, while write_start_address and
+ * subrequests. For FC22, start_address stores the holding-register address,
+ * quantity stores the AND mask, and value stores the OR mask. For FC23,
+ * start_address and quantity describe the read range, while write_start_address and
  * write_quantity describe the write range. For FC43/14, start_address stores
  * the Read Device ID code, quantity stores the requested object ID, and value
  * stores the MEI type 0x0E. For FC11, quantity stores the expected
@@ -307,6 +309,23 @@ int mbrtum_build_write_multiple_registers_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC22 Mask Write Holding Register RTU request ADU.
+ *
+ * slave_address may be 0 for a broadcast or 1-247 for a unicast request.
+ * The result applied by the server is:
+ * (current_value AND and_mask) OR (or_mask AND (NOT and_mask)).
+ */
+int mbrtum_build_mask_write_register_request(
+    uint8_t slave_address,
+    uint16_t address,
+    uint16_t and_mask,
+    uint16_t or_mask,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC23 Read/Write Multiple Holding Registers RTU request ADU.
  *
  * slave_address must be 1-247. read_quantity must be 1-125 and
@@ -463,8 +482,8 @@ int mbrtum_process_response_with_request_adu(
  * - slave address;
  * - normal or exception function code;
  * - exact read byte count and zero-valued unused packed-bit padding;
- * - exact write acknowledgement address, quantity, value, or FC21 request
- *   echo.
+ * - exact write acknowledgement address, quantity, value, FC22 masks, or
+ *   FC21 request echo.
  *
  * For broadcast requests, MBRTUM_ERROR_RESPONSE_NOT_EXPECTED is returned.
  * FC08, FC20, and FC21 require
