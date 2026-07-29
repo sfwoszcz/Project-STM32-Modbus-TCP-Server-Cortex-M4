@@ -4,6 +4,8 @@
 #include "modbus_device_id_internal.h"
 #include "modbus_file_record.h"
 #include "modbus_file_record_internal.h"
+#include "modbus_fifo.h"
+#include "modbus_fifo_internal.h"
 #include "modbus_pdu.h"
 
 #include <string.h>
@@ -43,6 +45,13 @@ typedef struct {
 } mb_file_record_state_t;
 
 static mb_file_record_state_t file_record_state;
+
+typedef struct {
+    size_t queue_count;
+    mb_fifo_queue_t queues[MB_FIFO_MAX_QUEUES];
+} mb_fifo_state_t;
+
+static mb_fifo_state_t fifo_state;
 
 static int conformity_level_is_valid(uint8_t conformity_level)
 {
@@ -102,6 +111,11 @@ static void clear_file_records_unlocked(void)
     memset(&file_record_state, 0, sizeof(file_record_state));
 }
 
+static void clear_fifos_unlocked(void)
+{
+    memset(&fifo_state, 0, sizeof(fifo_state));
+}
+
 void mb_init(void)
 {
     mb_lock();
@@ -111,6 +125,7 @@ void mb_init(void)
     memset(input_registers, 0, sizeof(input_registers));
     clear_device_id_unlocked();
     clear_file_records_unlocked();
+    clear_fifos_unlocked();
     mb_unlock();
 }
 
@@ -715,6 +730,133 @@ uint8_t mb_file_record_process_write_request(const uint8_t *request_pdu,
 
     memmove(response_pdu, request_pdu, request_pdu_len);
     *response_pdu_len = request_pdu_len;
+    mb_unlock();
+    return 0u;
+}
+
+
+int mb_fifo_configure(const mb_fifo_queue_t *queues, size_t queue_count)
+{
+    if (queues == NULL) {
+        return MB_FIFO_ERROR_ARGUMENT;
+    }
+    if (queue_count == 0u || queue_count > MB_FIFO_MAX_QUEUES) {
+        return MB_FIFO_ERROR_CAPACITY;
+    }
+
+    for (size_t i = 0u; i < queue_count; ++i) {
+        if (queues[i].registers == NULL ||
+            queues[i].register_count == 0u ||
+            queues[i].register_count > MB_FIFO_MAX_REGISTERS) {
+            return MB_FIFO_ERROR_QUEUES;
+        }
+        if (i > 0u &&
+            queues[i - 1u].pointer_address >= queues[i].pointer_address) {
+            return MB_FIFO_ERROR_QUEUES;
+        }
+    }
+
+    mb_lock();
+    clear_fifos_unlocked();
+    memcpy(fifo_state.queues,
+           queues,
+           queue_count * sizeof(fifo_state.queues[0]));
+    fifo_state.queue_count = queue_count;
+    mb_unlock();
+    return MB_FIFO_OK;
+}
+
+void mb_fifo_clear(void)
+{
+    mb_lock();
+    clear_fifos_unlocked();
+    mb_unlock();
+}
+
+int mb_fifo_is_configured(void)
+{
+    int configured;
+
+    mb_lock();
+    configured = fifo_state.queue_count != 0u;
+    mb_unlock();
+    return configured;
+}
+
+static const mb_fifo_queue_t *find_fifo_unlocked(uint16_t pointer_address)
+{
+    for (size_t i = 0u; i < fifo_state.queue_count; ++i) {
+        if (fifo_state.queues[i].pointer_address == pointer_address) {
+            return &fifo_state.queues[i];
+        }
+        if (fifo_state.queues[i].pointer_address > pointer_address) {
+            break;
+        }
+    }
+    return NULL;
+}
+
+uint8_t mb_fifo_process_read_request(const uint8_t *request_pdu,
+                                     size_t request_pdu_len,
+                                     uint8_t *response_pdu,
+                                     size_t response_capacity,
+                                     size_t *response_pdu_len)
+{
+    const mb_fifo_queue_t *queue;
+    uint16_t pointer_address;
+    uint16_t fifo_count;
+    size_t byte_count;
+    size_t response_length;
+
+    if (request_pdu == NULL || response_pdu == NULL ||
+        response_pdu_len == NULL) {
+        return MB_EX_SERVER_FAILURE;
+    }
+    *response_pdu_len = 0u;
+
+    if (request_pdu_len != 3u) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+    pointer_address =
+        (uint16_t)(((uint16_t)request_pdu[1] << 8u) | request_pdu[2]);
+
+    mb_lock();
+    queue = find_fifo_unlocked(pointer_address);
+    if (queue == NULL) {
+        mb_unlock();
+        return MB_EX_ILLEGAL_DATA_ADDRESS;
+    }
+
+    fifo_count = queue->registers[0];
+    if (fifo_count > MB_FIFO_MAX_VALUES) {
+        mb_unlock();
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+    if (queue->register_count < 1u + (size_t)fifo_count) {
+        mb_unlock();
+        return MB_EX_SERVER_FAILURE;
+    }
+
+    byte_count = 2u + ((size_t)fifo_count * 2u);
+    response_length = 3u + byte_count;
+    if (response_capacity < response_length) {
+        mb_unlock();
+        return MB_EX_SERVER_FAILURE;
+    }
+
+    response_pdu[0] = MB_FIFO_FUNCTION_CODE;
+    response_pdu[1] = (uint8_t)(byte_count >> 8u);
+    response_pdu[2] = (uint8_t)byte_count;
+    response_pdu[3] = (uint8_t)(fifo_count >> 8u);
+    response_pdu[4] = (uint8_t)fifo_count;
+    for (uint16_t i = 0u; i < fifo_count; ++i) {
+        uint16_t value = queue->registers[1u + (size_t)i];
+        size_t offset = 5u + ((size_t)i * 2u);
+
+        response_pdu[offset] = (uint8_t)(value >> 8u);
+        response_pdu[offset + 1u] = (uint8_t)value;
+    }
+    *response_pdu_len = response_length;
     mb_unlock();
     return 0u;
 }

@@ -1,6 +1,6 @@
 # Verification report
 
-Verification performed on 2026-07-28.
+Verification performed on 2026-07-29.
 
 External STM32F767 hardware evidence updated on 2026-07-21.
 
@@ -24,11 +24,12 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus FC20 Read File Record tests | Pass |
 | Modbus FC21 Write File Record tests | Pass |
 | Modbus FC22 Mask Write Register tests | Pass |
+| Modbus FC24 Read FIFO Queue tests | Pass |
 | Modbus RTU 50 us timing/state tests | Pass |
 | Modbus TCP ADU regression tests | Pass |
 | POSIX TCP integration smoke test | Pass |
 | lwIP transport compile check | Pass |
-| CMake configure/build/CTest (16 tests) | Pass |
+| CMake configure/build/CTest (17 tests) | Pass |
 | SVG XML validation and PNG rendering | Pass |
 
 The strict warning set is:
@@ -42,7 +43,7 @@ The strict warning set is:
 The host RTU suite verifies:
 
 - CRC calculation, wire byte order, and corruption rejection
-- all ordinary supported function codes, including FC21, FC22, and FC23, through RTU framing
+- all ordinary supported function codes, including FC21, FC22, FC23, and FC24, through RTU framing
 - normal and exception response CRCs
 - configurable slave addressing
 - silent discard of wrong-address and invalid-CRC frames
@@ -60,9 +61,9 @@ The host RTU suite verifies:
 
 ## RTU master coverage
 
-The host RTU master plus dedicated FC11, FC20, FC21, FC22, FC23, and FC43/14 suites verify:
+The host RTU master plus dedicated FC11, FC20, FC21, FC22, FC23, FC24, and FC43/14 suites verify:
 
-- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC11, FC20, FC21, FC22, FC23, and FC43/14 request generation
+- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC11, FC20, FC21, FC22, FC23, FC24, and FC43/14 request generation
 - low-byte-first request CRC generation
 - unicast requests and broadcast-write behavior
 - quantity, value, capacity, and 16-bit address-range validation
@@ -76,7 +77,8 @@ The host RTU master plus dedicated FC11, FC20, FC21, FC22, FC23, and FC43/14 sui
 - exact FC21 complete-request echo validation
 - exact FC22 address, AND-mask, and OR-mask acknowledgement validation
 - exact FC23 response byte-count and length validation
-- zero-copy bit, register, FC11, FC20 subresponse, and device-identification object decoding with index validation
+- exact FC24 two-byte Byte Count, FIFO Count, count limit, and length validation
+- zero-copy bit, register, FC11, FC20 subresponse, FC24 FIFO, and device-identification object decoding with index validation
 - malformed response and API argument rejection
 
 ## FC11 Report Server ID coverage
@@ -153,6 +155,28 @@ The dedicated FC22 suite verifies:
 - Modbus exception, CRC, length, and acknowledgement-mismatch handling
 - master transaction-engine descriptor/ADU validation
 - unicast response completion and broadcast transmit-only completion
+
+## FC24 Read FIFO Queue coverage
+
+The dedicated FC24 suite verifies:
+
+- fixed-capacity sorted FIFO descriptor configuration and clearing
+- failed configuration preserving the active map
+- application-owned count/value register blocks without heap allocation
+- the specification example at FIFO Pointer Address `0x04DE`
+- empty, one-value, and maximum 31-value queues
+- non-destructive repeated reads
+- exact three-byte request PDU validation
+- unknown pointer Illegal Data Address responses
+- FIFO Count greater than 31 Illegal Data Value responses
+- inconsistent application storage and response-capacity Server Device Failure responses
+- shared PDU, Modbus TCP, and unicast Modbus RTU processing
+- RTU broadcast suppression for the read-only function
+- RTU master request generation and CRC
+- exact two-byte Byte Count/FIFO Count response validation
+- zero-copy FIFO response and queued-register decoding
+- exception, CRC, length, address, function, and malformed-response handling
+- master transaction-engine descriptor/ADU validation and completion
 
 ## FC23 coverage
 

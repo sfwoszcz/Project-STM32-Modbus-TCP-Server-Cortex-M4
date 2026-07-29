@@ -33,6 +33,7 @@ FC43_DEVICE_ID_TEST := $(BUILD)/modbus_fc43_device_id_tests
 FC20_TEST := $(BUILD)/modbus_fc20_tests
 FC21_TEST := $(BUILD)/modbus_fc21_tests
 FC22_TEST := $(BUILD)/modbus_fc22_tests
+FC24_TEST := $(BUILD)/modbus_fc24_tests
 RTU_TIMING_TEST := $(BUILD)/modbus_rtu_timing_tests
 PROTOCOL_TEST := $(BUILD)/modbus_protocol_tests
 SELFTEST := $(BUILD)/register_selftest
@@ -48,7 +49,7 @@ all: library demo compile-check unit-tests
 help:
 	@printf '%s\n' \
 	  'make              Build the portable library, tests, demo server, and lwIP compile checks' \
-	  'make test         Run CRC, PDU, RTU slave/master/diagnostics/FC11/FC20/FC21/FC22/FC23/FC43 tests, TCP, register, and socket tests' \
+	  'make test         Run CRC, PDU, RTU slave/master/diagnostics/FC11/FC20/FC21/FC22/FC23/FC24/FC43 tests, TCP, register, and socket tests' \
 	  'make ci           Clean and run the complete verification suite' \
 	  'make stm32-help   Show CubeMX integration instructions' \
 	  'make clean        Remove generated build files'
@@ -61,7 +62,7 @@ compile-check: $(LWIP_CHECK_OBJECTS)
 
 unit-tests: $(CRC_TEST) $(PDU_TEST) $(RTU_TEST) $(RTU_LEGACY_LINK_TEST) $(RTU_MASTER_TEST) \
 	$(RTU_MASTER_TRANSACTION_TEST) $(RTU_DIAGNOSTICS_TEST) $(FC11_TEST) $(FC23_TEST) \
-	$(FC43_DEVICE_ID_TEST) $(FC20_TEST) $(FC21_TEST) $(FC22_TEST) $(RTU_TIMING_TEST) $(PROTOCOL_TEST) $(SELFTEST)
+	$(FC43_DEVICE_ID_TEST) $(FC20_TEST) $(FC21_TEST) $(FC22_TEST) $(FC24_TEST) $(RTU_TIMING_TEST) $(PROTOCOL_TEST) $(SELFTEST)
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -125,6 +126,10 @@ $(FC22_TEST): Tests/host/test_modbus_fc22.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
+$(FC24_TEST): Tests/host/test_modbus_fc24.c $(CORE_SOURCES)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
+
 $(RTU_TIMING_TEST): Tests/host/test_modbus_rtu_timing.c $(CORE_SOURCES)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
@@ -164,6 +169,7 @@ test: all
 	$(FC20_TEST)
 	$(FC21_TEST)
 	$(FC22_TEST)
+	$(FC24_TEST)
 	$(RTU_TIMING_TEST)
 	$(PROTOCOL_TEST)
 	$(SELFTEST)

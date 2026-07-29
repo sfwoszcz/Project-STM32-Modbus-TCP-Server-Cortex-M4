@@ -89,6 +89,7 @@ validation.
 | `15` | Write File Record | 27 subrequests; request data <= 251 bytes | exact request echo |
 | `16` | Mask Write Register | one holding register | echoed address and masks |
 | `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
+| `18` | Read FIFO Queue | one FIFO pointer | count plus up to 31 registers |
 | `2B/0E` | Read Device Identification | Basic/Regular/Extended/Specific | segmented object list |
 
 The request builders reject an address range whose final item would exceed
@@ -130,7 +131,8 @@ The compact fields are reused by function-specific builders:
 - `value` contains `0xFF00` or `0x0000` for FC05;
 - `value` contains the written register value for FC06;
 - `quantity` contains the AND mask and `value` contains the OR mask for FC22;
-- the dedicated FC20, FC21, FC23, FC43/14, and FC11 sections describe their
+- `start_address` contains the FIFO Pointer Address for FC24;
+- the dedicated FC20, FC21, FC23, FC24, FC43/14, and FC11 sections describe their
   field mappings;
 - unused fields are zero.
 
@@ -315,6 +317,20 @@ A normal response is accepted only when all three echoed fields exactly match
 the request descriptor. Broadcast descriptors set `expects_response` to zero.
 See [`modbus-fc22-mask-write-register.md`](modbus-fc22-mask-write-register.md).
 
+## FC24 requests
+
+`mbrtum_build_read_fifo_queue_request()` accepts a unicast slave address and a
+16-bit FIFO Pointer Address. It builds the exact six-byte RTU ADU, including
+CRC. The compact request descriptor stores the pointer in `start_address`; all
+other function-specific fields are zero.
+
+A normal response is accepted only when its two-byte Byte Count equals
+`2 + (FIFO Count × 2)`, FIFO Count is no greater than 31, and the complete ADU
+length exactly matches the declared count. `mbrtum_get_fifo_response()` exposes
+a zero-copy count/value view, and `mbrtum_get_fifo_register()` decodes one
+queued register by index. See
+[`modbus-fc24-read-fifo-queue.md`](modbus-fc24-read-fifo-queue.md).
+
 ## FC23 requests
 
 `mbrtum_build_read_write_multiple_registers_request()` records the read range in
@@ -345,7 +361,7 @@ The transport must transmit the request and must not wait for a response.
 Calling `mbrtum_process_response()` with a broadcast request returns
 `MBRTUM_ERROR_RESPONSE_NOT_EXPECTED`.
 
-Read builders, including FC20 and FC23, reject address zero. FC21 and FC22
+Read builders, including FC20, FC23, and FC24, reject address zero. FC21 and FC22
 accept address zero because they are write-only functions.
 
 ## Modbus exception responses
@@ -445,16 +461,17 @@ remains unchanged.
 `Tests/host/test_modbus_rtu_master.c`,
 `Tests/host/test_modbus_fc20.c`,
 `Tests/host/test_modbus_fc21.c`,
-`Tests/host/test_modbus_fc22.c`, and
-`Tests/host/test_modbus_fc23.c` verify:
+`Tests/host/test_modbus_fc22.c`,
+`Tests/host/test_modbus_fc23.c`, and
+`Tests/host/test_modbus_fc24.c` verify:
 
-- all ordinary supported request builders, including FC20, FC21, FC22, and FC23
+- all ordinary supported request builders, including FC20, FC21, FC22, FC23, and FC24
 - known request field layouts and generated CRCs
 - unicast and broadcast behavior
 - maximum FC0F, FC10, FC20, FC21, and FC23 request sizes
 - output-capacity failures
 - address-range overflow rejection
-- normal bit, register, FC20 subresponse, FC21 echo, FC22 mask acknowledgement, and FC23 response validation
+- normal bit, register, FC20 subresponse, FC21 echo, FC22 mask acknowledgement, FC23 register, and FC24 FIFO response validation
 - index validation
 - Modbus exception responses
 - invalid exception code and exception length rejection
@@ -467,6 +484,7 @@ remains unchanged.
 - multiple-write acknowledgement mismatch rejection
 - FC21 complete-request echo mismatch rejection
 - FC22 address and mask acknowledgement mismatch rejection
+- FC24 Byte Count/FIFO Count mismatch and count-limit rejection
 - API argument validation
 
 Run the complete verification suite with:
@@ -484,7 +502,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The CTest suite includes dedicated `rtu_master`, `fc20`, `fc21`, `fc22`,
-`fc23`, and `fc43_device_id` tests.
+`fc23`, `fc24`, and `fc43_device_id` tests.
 
 ## Transport boundary
 
