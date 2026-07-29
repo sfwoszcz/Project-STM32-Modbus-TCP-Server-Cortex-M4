@@ -107,6 +107,19 @@ byte count, response expectation, function, address, and CRC against the
 request descriptor. Response timing, retries, exceptions, and decoding reuse
 the existing state machine.
 
+## Generic FC43 support
+
+The transaction engine accepts requests produced by
+`mbrtum_build_mei_request()`. Before transmission it verifies the unicast
+address, response expectation, fixed-capacity ADU length, generic MEI type,
+MEI-data length stored in the immutable descriptor, zero-valued unused fields,
+and CRC. Normal responses are validated for address, function, CRC, and echoed
+MEI type before the interface-specific bytes are exposed through the normal
+zero-copy response view.
+
+MEI `0x0D` and generic use of `0x0E` are rejected at request construction and
+transaction validation. FC43/14 remains covered by the stricter path below.
+
 ## FC43/14 support
 
 The transaction engine accepts requests produced by

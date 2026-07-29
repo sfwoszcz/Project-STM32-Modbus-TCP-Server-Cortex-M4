@@ -6,6 +6,7 @@ stm32-modbus-tcp-server/
 │   │   ├── modbus_device_id.h
 │   │   ├── modbus_file_record.h
 │   │   ├── modbus_fifo.h
+│   │   ├── modbus_mei.h
 │   │   ├── modbus_pdu.h
 │   │   ├── modbus_protocol.h
 │   │   ├── modbus_crc16.h
@@ -21,6 +22,7 @@ stm32-modbus-tcp-server/
 │       ├── modbus_device_id_internal.h
 │       ├── modbus_file_record_internal.h
 │       ├── modbus_fifo_internal.h
+│       ├── modbus_mei_internal.h
 │       ├── modbus_protocol.c
 │       ├── modbus_crc16.c
 │       ├── modbus_rtu.c
@@ -47,6 +49,7 @@ stm32-modbus-tcp-server/
 │   │   ├── test_modbus_fc23.c
 │   │   ├── test_modbus_fc24.c
 │   │   ├── test_modbus_fc43_device_id.c
+│   │   ├── test_modbus_fc43_mei.c
 │   │   ├── test_modbus_pdu.c
 │   │   ├── test_modbus_protocol.c
 │   │   ├── test_modbus_rtu.c
@@ -65,6 +68,7 @@ stm32-modbus-tcp-server/
 │   ├── modbus-fc23.md
 │   ├── modbus-fc24-read-fifo-queue.md
 │   ├── modbus-fc43-device-identification.md
+│   ├── modbus-fc43-mei-transport.md
 │   ├── modbus-rtu-core.md
 │   ├── modbus-rtu-master-core.md
 │   ├── modbus-rtu-master-transaction.md

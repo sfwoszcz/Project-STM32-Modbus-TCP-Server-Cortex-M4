@@ -1,6 +1,8 @@
 #ifndef MODBUS_DEVICE_ID_H
 #define MODBUS_DEVICE_ID_H
 
+#include "modbus_mei.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -8,8 +10,8 @@
 extern "C" {
 #endif
 
-#define MB_DEVICE_ID_FUNCTION_CODE 0x2Bu
-#define MB_DEVICE_ID_MEI_TYPE 0x0Eu
+#define MB_DEVICE_ID_FUNCTION_CODE MB_MEI_FUNCTION_CODE
+#define MB_DEVICE_ID_MEI_TYPE MB_MEI_TYPE_READ_DEVICE_IDENTIFICATION
 
 #define MB_DEVICE_ID_READ_BASIC 0x01u
 #define MB_DEVICE_ID_READ_REGULAR 0x02u

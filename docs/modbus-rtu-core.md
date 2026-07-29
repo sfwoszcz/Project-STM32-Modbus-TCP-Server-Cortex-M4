@@ -12,7 +12,7 @@ Implemented now:
 - configurable unicast slave address from 1 through 247
 - address 0 broadcast handling
 - silent discard of invalid CRC frames and frames for another slave
-- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `16`, `17`, `18`, and `2B/0E`
+- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `16`, `17`, `18`, generic `2B`, and `2B/0E`
 - RTU-only FC11 Report Server ID processing with copied fixed-capacity data
 - normal and exception response framing
 - host tests for all supported function codes and RTU-specific behavior
@@ -79,7 +79,7 @@ For a broadcast request at address 0:
 
 - supported write-only functions are processed
 - no response is generated
-- read functions, FC11, FC20, FC23, FC24, FC43/14, and unsupported functions are ignored
+- read functions, FC11, FC20, FC23, FC24, generic FC43, FC43/14, and unsupported functions are ignored
 - FC21 and FC22 are processed as broadcast writes and produce no response
 - malformed writes do not modify the register map
 
@@ -178,6 +178,20 @@ exact request echo.
 The RTU wrapper accepts FC21 at broadcast address zero because it is write-only.
 Broadcast data is validated and applied, while the response is suppressed. See
 [`modbus-fc21-write-file-record.md`](modbus-fc21-write-file-record.md).
+
+## Generic FC43 Encapsulated Interface Transport
+
+The shared PDU engine parses the common `[0x2B][MEI type][MEI data]` envelope
+and dispatches registered generic MEI types through the fixed-capacity
+`modbus_mei.h` callback registry. Request and response interface data are
+bounded at 251 bytes. The dispatcher echoes the MEI type, converts callback
+failures into standard Modbus exception responses, and leaves all semantic
+interface validation to the registered handler.
+
+MEI `0x0D` CANopen is intentionally rejected. MEI `0x0E` remains routed to the
+existing strict Read Device Identification implementation. No generic handler
+is active after reset until the application registers one. See
+[`modbus-fc43-mei-transport.md`](modbus-fc43-mei-transport.md).
 
 ## FC43/14 Read Device Identification
 

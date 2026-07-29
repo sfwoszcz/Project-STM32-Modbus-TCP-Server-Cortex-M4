@@ -68,6 +68,13 @@ static int device_id_code_is_valid(uint16_t read_device_id_code)
            read_device_id_code <= MB_DEVICE_ID_READ_SPECIFIC;
 }
 
+static int mei_type_is_generic(uint16_t mei_type)
+{
+    return mei_type <= UINT8_MAX &&
+           mei_type != MB_MEI_TYPE_CANOPEN_GENERAL_REFERENCE &&
+           mei_type != MB_MEI_TYPE_READ_DEVICE_IDENTIFICATION;
+}
+
 static int device_id_conformity_is_valid(uint8_t conformity_level)
 {
     return conformity_level == MB_DEVICE_ID_CONFORMITY_BASIC_STREAM ||
@@ -751,6 +758,69 @@ int mbrtum_build_read_fifo_queue_request(
     return MBRTUM_OK;
 }
 
+int mbrtum_build_mei_request(
+    uint8_t slave_address,
+    uint8_t mei_type,
+    const uint8_t *mei_data,
+    size_t mei_data_length,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    size_t length_without_crc;
+
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (!mei_type_is_generic(mei_type)) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+    if (mei_data_length > MB_MEI_MAX_DATA_LENGTH ||
+        (mei_data_length != 0u && mei_data == NULL)) {
+        return MBRTUM_ERROR_VALUE;
+    }
+
+    length_without_crc = 3u + mei_data_length;
+    if (request_adu_capacity < length_without_crc + MODBUS_RTU_CRC_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+    if (mei_data_length != 0u) {
+        uintptr_t adu_begin = (uintptr_t)request_adu;
+        uintptr_t adu_end = adu_begin + length_without_crc + MODBUS_RTU_CRC_SIZE;
+        uintptr_t data_begin = (uintptr_t)mei_data;
+        uintptr_t data_end = data_begin + mei_data_length;
+
+        if (data_begin < adu_end && data_end > adu_begin) {
+            return MBRTUM_ERROR_ARGUMENT;
+        }
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT;
+    request_adu[2] = mei_type;
+    if (mei_data_length != 0u) {
+        memcpy(&request_adu[3], mei_data, mei_data_length);
+    }
+    *request_adu_length = append_crc(request_adu, length_without_crc);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT,
+                   (uint16_t)mei_data_length,
+                   0u,
+                   mei_type);
+    return MBRTUM_OK;
+}
+
 int mbrtum_build_read_device_identification_request(
     uint8_t slave_address,
     uint8_t read_device_id_code,
@@ -1124,12 +1194,19 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             return MBRTUM_ERROR_VALUE;
         }
         break;
-    case MBRTUM_FC_READ_DEVICE_IDENTIFICATION:
-        if (!device_id_code_is_valid(request->start_address) ||
-            request->quantity > UINT8_MAX ||
-            request->value != MB_DEVICE_ID_MEI_TYPE ||
-            request->write_start_address != 0u ||
-            request->write_quantity != 0u) {
+    case MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT:
+        if (request->value == MB_DEVICE_ID_MEI_TYPE) {
+            if (!device_id_code_is_valid(request->start_address) ||
+                request->quantity > UINT8_MAX ||
+                request->write_start_address != 0u ||
+                request->write_quantity != 0u) {
+                return MBRTUM_ERROR_VALUE;
+            }
+        } else if (!mei_type_is_generic(request->value) ||
+                   request->start_address > MB_MEI_MAX_DATA_LENGTH ||
+                   request->quantity != 0u ||
+                   request->write_start_address != 0u ||
+                   request->write_quantity != 0u) {
             return MBRTUM_ERROR_VALUE;
         }
         break;
@@ -1240,6 +1317,18 @@ static int original_request_adu_is_valid(
             response_data_length += subresponse_length;
         }
         return response_data_length == request->quantity;
+    }
+
+    if (request->function ==
+        MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT) {
+        if (request->value == MB_DEVICE_ID_MEI_TYPE) {
+            return request_adu_length == 7u &&
+                   request_adu[2] == MB_DEVICE_ID_MEI_TYPE &&
+                   request_adu[3] == (uint8_t)request->start_address &&
+                   request_adu[4] == (uint8_t)request->quantity;
+        }
+        return request_adu_length == 5u + (size_t)request->start_address &&
+               request_adu[2] == (uint8_t)request->value;
     }
 
     if (request->function == MBRTUM_FC_DIAGNOSTICS) {
@@ -1609,7 +1698,23 @@ int mbrtum_process_response_with_request_adu(
         return MBRTUM_OK;
     }
 
-    case MBRTUM_FC_READ_DEVICE_IDENTIFICATION: {
+    case MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT: {
+        if (request->value != MB_DEVICE_ID_MEI_TYPE) {
+            if (response_adu_length < 5u) {
+                return MBRTUM_ERROR_RESPONSE_LENGTH;
+            }
+            if (response_adu[2] != (uint8_t)request->value) {
+                return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+            }
+            if (response_adu_length > MODBUS_RTU_ADU_MAX_SIZE) {
+                return MBRTUM_ERROR_RESPONSE_LENGTH;
+            }
+            response->function = request->function;
+            response->data = &response_adu[2];
+            response->data_length = response_adu_length - 4u;
+            return MBRTUM_OK;
+        }
+
         uint8_t read_code;
         uint8_t conformity_level;
         uint8_t more_follows;
@@ -2111,6 +2216,27 @@ int mbrtum_get_fifo_register(
 
     offset = (size_t)index * 2u;
     *value = read_be16(&fifo_response->values[offset]);
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_mei_response(
+    const mbrtum_response_t *response,
+    mbrtum_mei_response_t *mei_response)
+{
+    if (response == NULL || mei_response == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    memset(mei_response, 0, sizeof(*mei_response));
+    if (response->exception_code != 0u ||
+        response->function !=
+            MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT ||
+        response->data == NULL || response->data_length < 1u) {
+        return MBRTUM_ERROR_FUNCTION;
+    }
+
+    mei_response->mei_type = response->data[0];
+    mei_response->data = &response->data[1];
+    mei_response->data_length = response->data_length - 1u;
     return MBRTUM_OK;
 }
 

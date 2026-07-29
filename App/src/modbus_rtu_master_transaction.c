@@ -264,18 +264,29 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
             return 0;
         }
     } else if (request->function ==
-                   MBRTUM_FC_READ_DEVICE_IDENTIFICATION) {
+                   MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT) {
         if (request->slave_address == MODBUS_RTU_BROADCAST_ADDRESS ||
             request->expects_response != 1u ||
-            request->start_address < MB_DEVICE_ID_READ_BASIC ||
-            request->start_address > MB_DEVICE_ID_READ_SPECIFIC ||
-            request->quantity > UINT8_MAX ||
-            request->value != MB_DEVICE_ID_MEI_TYPE ||
             request->write_start_address != 0u ||
-            request->write_quantity != 0u || adu_length != 7u ||
-            adu[2] != MB_DEVICE_ID_MEI_TYPE ||
-            adu[3] != (uint8_t)request->start_address ||
-            adu[4] != (uint8_t)request->quantity) {
+            request->write_quantity != 0u) {
+            return 0;
+        }
+        if (request->value == MB_DEVICE_ID_MEI_TYPE) {
+            if (request->start_address < MB_DEVICE_ID_READ_BASIC ||
+                request->start_address > MB_DEVICE_ID_READ_SPECIFIC ||
+                request->quantity > UINT8_MAX || adu_length != 7u ||
+                adu[2] != MB_DEVICE_ID_MEI_TYPE ||
+                adu[3] != (uint8_t)request->start_address ||
+                adu[4] != (uint8_t)request->quantity) {
+                return 0;
+            }
+        } else if (request->value > UINT8_MAX ||
+                   request->value ==
+                       MB_MEI_TYPE_CANOPEN_GENERAL_REFERENCE ||
+                   request->start_address > MB_MEI_MAX_DATA_LENGTH ||
+                   request->quantity != 0u ||
+                   adu_length != 5u + (size_t)request->start_address ||
+                   adu[2] != (uint8_t)request->value) {
             return 0;
         }
     } else if (request->function == MBRTUM_FC_DIAGNOSTICS) {
