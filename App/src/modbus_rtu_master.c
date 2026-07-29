@@ -6,6 +6,7 @@
 
 #define MBRTUM_FIXED_REQUEST_ADU_SIZE 8u
 #define MBRTUM_WRITE_ACK_ADU_SIZE 8u
+#define MBRTUM_MASK_WRITE_ADU_SIZE 10u
 #define MBRTUM_EXCEPTION_ADU_SIZE 5u
 
 static uint16_t read_be16(const uint8_t *p)
@@ -326,6 +327,46 @@ int mbrtum_build_write_single_register_request(uint8_t slave_address,
                                request_adu,
                                request_adu_capacity,
                                request_adu_length);
+}
+
+int mbrtum_build_mask_write_register_request(
+    uint8_t slave_address,
+    uint16_t address,
+    uint16_t and_mask,
+    uint16_t or_mask,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (request == NULL || request_adu == NULL || request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!write_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (request_adu_capacity < MBRTUM_MASK_WRITE_ADU_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_MASK_WRITE_REGISTER;
+    write_be16(&request_adu[2], address);
+    write_be16(&request_adu[4], and_mask);
+    write_be16(&request_adu[6], or_mask);
+    *request_adu_length = append_crc(request_adu, 8u);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_MASK_WRITE_REGISTER,
+                   address,
+                   and_mask,
+                   or_mask);
+    return MBRTUM_OK;
 }
 
 int mbrtum_build_write_multiple_coils_request(
@@ -976,6 +1017,12 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             return MBRTUM_ERROR_QUANTITY;
         }
         break;
+    case MBRTUM_FC_MASK_WRITE_REGISTER:
+        if (request->write_start_address != 0u ||
+            request->write_quantity != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
     case MBRTUM_FC_READ_FILE_RECORD:
         if (request->start_address < 7u ||
             request->start_address > MB_FILE_RECORD_REQUEST_DATA_MAX ||
@@ -1345,6 +1392,18 @@ int mbrtum_process_response_with_request_adu(
         }
         if (read_be16(&response_adu[2]) != request->start_address ||
             read_be16(&response_adu[4]) != request->quantity) {
+            return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
+        }
+        response->function = request->function;
+        return MBRTUM_OK;
+
+    case MBRTUM_FC_MASK_WRITE_REGISTER:
+        if (response_adu_length != MBRTUM_MASK_WRITE_ADU_SIZE) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        if (read_be16(&response_adu[2]) != request->start_address ||
+            read_be16(&response_adu[4]) != request->quantity ||
+            read_be16(&response_adu[6]) != request->value) {
             return MBRTUM_ERROR_ACKNOWLEDGEMENT_MISMATCH;
         }
         response->function = request->function;

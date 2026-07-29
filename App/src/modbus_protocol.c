@@ -215,6 +215,29 @@ static uint8_t process_pdu_function(const uint8_t *pdu,
                                                     response_capacity,
                                                     response_len);
 
+    case 0x16u: { /* Mask Write Holding Register */
+        uint16_t and_mask;
+        uint16_t or_mask;
+
+        if (pdu_len != 7u) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        address = read_be16(&pdu[1]);
+        if (!range_is_valid(address, 1u, MB_MAX_HREGS)) {
+            return MB_EX_ILLEGAL_DATA_ADDRESS;
+        }
+        if (response_capacity < 7u) {
+            return MB_EX_SERVER_FAILURE;
+        }
+
+        and_mask = read_be16(&pdu[3]);
+        or_mask = read_be16(&pdu[5]);
+        (void)mb_mask_write_hreg(address, and_mask, or_mask);
+        memcpy(response, pdu, 7u);
+        *response_len = 7u;
+        return 0u;
+    }
+
     case 0x17u: { /* Read/Write Multiple Holding Registers */
         uint16_t read_address;
         uint16_t read_quantity;

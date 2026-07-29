@@ -13,7 +13,7 @@ ADU, and exposes zero-copy helpers for decoded bit and register data.
 Implemented now:
 
 - request generation for function codes `01`, `02`, `03`, `04`, `05`, `06`,
-  `0F`, `10`, `11`, `14`, `15`, `17`, and `2B/0E`
+  `0F`, `10`, `11`, `14`, `15`, `16`, `17`, and `2B/0E`
 - Modbus CRC-16 generation in low-byte-first RTU wire order
 - unicast slave addresses from 1 through 247
 - broadcast writes at address 0
@@ -27,6 +27,7 @@ Implemented now:
 - exact multiple-write address/quantity acknowledgement validation
 - zero-copy bit, register, FC20 subresponse, and FC43/14 object access helpers
 - exact FC21 request-echo validation
+- exact FC22 address and mask acknowledgement validation
 - strict host tests and integration with Make, CMake, and CTest
 - no dynamic allocation
 
@@ -86,6 +87,7 @@ validation.
 | `11` | Report Server ID | function-only unicast request | ID, run status, additional data |
 | `14` | Read File Record | 35 subrequests; combined response data <= 245 bytes | file subresponses |
 | `15` | Write File Record | 27 subrequests; request data <= 251 bytes | exact request echo |
+| `16` | Mask Write Register | one holding register | echoed address and masks |
 | `17` | Read/Write Multiple Registers | read 1 to 125; write 1 to 121 | big-endian read registers |
 | `2B/0E` | Read Device Identification | Basic/Regular/Extended/Specific | segmented object list |
 
@@ -123,11 +125,14 @@ typedef struct {
 The descriptor must remain unchanged until the corresponding response has been
 validated.
 
-`value` contains:
+The compact fields are reused by function-specific builders:
 
-- `0xFF00` or `0x0000` for FC05
-- the written register value for FC06
-- zero for the other supported functions
+- `value` contains `0xFF00` or `0x0000` for FC05;
+- `value` contains the written register value for FC06;
+- `quantity` contains the AND mask and `value` contains the OR mask for FC22;
+- the dedicated FC20, FC21, FC23, FC43/14, and FC11 sections describe their
+  field mappings;
+- unused fields are zero.
 
 `expects_response` is zero only for a valid broadcast write.
 
@@ -299,6 +304,17 @@ response is an exact echo of all variable-length request data, validation
 requires `mbrtum_process_response_with_request_adu()`. See
 [`modbus-fc21-write-file-record.md`](modbus-fc21-write-file-record.md).
 
+## FC22 requests
+
+`mbrtum_build_mask_write_register_request()` accepts unicast or broadcast
+addresses and builds the fixed ten-byte RTU ADU containing the register
+address, AND mask, OR mask, and CRC. The request descriptor stores the address
+in `start_address`, the AND mask in `quantity`, and the OR mask in `value`.
+
+A normal response is accepted only when all three echoed fields exactly match
+the request descriptor. Broadcast descriptors set `expects_response` to zero.
+See [`modbus-fc22-mask-write-register.md`](modbus-fc22-mask-write-register.md).
+
 ## FC23 requests
 
 `mbrtum_build_read_write_multiple_registers_request()` records the read range in
@@ -317,6 +333,7 @@ Address zero is accepted only by the write-only builders:
 - FC0F
 - FC10
 - FC21
+- FC22
 
 A successful broadcast builder sets:
 
@@ -328,8 +345,8 @@ The transport must transmit the request and must not wait for a response.
 Calling `mbrtum_process_response()` with a broadcast request returns
 `MBRTUM_ERROR_RESPONSE_NOT_EXPECTED`.
 
-Read builders, including FC20 and FC23, reject address zero. FC21 accepts
-address zero because it is a write-only function.
+Read builders, including FC20 and FC23, reject address zero. FC21 and FC22
+accept address zero because they are write-only functions.
 
 ## Modbus exception responses
 
@@ -427,16 +444,17 @@ remains unchanged.
 
 `Tests/host/test_modbus_rtu_master.c`,
 `Tests/host/test_modbus_fc20.c`,
-`Tests/host/test_modbus_fc21.c`, and
+`Tests/host/test_modbus_fc21.c`,
+`Tests/host/test_modbus_fc22.c`, and
 `Tests/host/test_modbus_fc23.c` verify:
 
-- all ordinary supported request builders, including FC20, FC21, and FC23
+- all ordinary supported request builders, including FC20, FC21, FC22, and FC23
 - known request field layouts and generated CRCs
 - unicast and broadcast behavior
 - maximum FC0F, FC10, FC20, FC21, and FC23 request sizes
 - output-capacity failures
 - address-range overflow rejection
-- normal bit, register, FC20 subresponse, FC21 echo, and FC23 response validation
+- normal bit, register, FC20 subresponse, FC21 echo, FC22 mask acknowledgement, and FC23 response validation
 - index validation
 - Modbus exception responses
 - invalid exception code and exception length rejection
@@ -448,6 +466,7 @@ remains unchanged.
 - single-write acknowledgement mismatch rejection
 - multiple-write acknowledgement mismatch rejection
 - FC21 complete-request echo mismatch rejection
+- FC22 address and mask acknowledgement mismatch rejection
 - API argument validation
 
 Run the complete verification suite with:
@@ -464,8 +483,8 @@ cmake --build build --clean-first
 ctest --test-dir build --output-on-failure
 ```
 
-The CTest suite includes dedicated `rtu_master`, `fc20`, `fc21`, `fc23`, and
-`fc43_device_id` tests.
+The CTest suite includes dedicated `rtu_master`, `fc20`, `fc21`, `fc22`,
+`fc23`, and `fc43_device_id` tests.
 
 ## Transport boundary
 

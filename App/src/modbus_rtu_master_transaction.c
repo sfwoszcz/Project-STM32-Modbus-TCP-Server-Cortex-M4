@@ -145,6 +145,22 @@ static int request_adu_matches_descriptor(const mbrtum_request_t *request,
         if (offset != data_end || subrequest_count != request->quantity) {
             return 0;
         }
+    } else if (request->function == MBRTUM_FC_MASK_WRITE_REGISTER) {
+        uint8_t expected_response = (uint8_t)(
+            request->slave_address != MODBUS_RTU_BROADCAST_ADDRESS);
+
+        if (request->expects_response != expected_response ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u ||
+            adu_length != 10u ||
+            adu[2] != (uint8_t)(request->start_address >> 8u) ||
+            adu[3] != (uint8_t)request->start_address ||
+            adu[4] != (uint8_t)(request->quantity >> 8u) ||
+            adu[5] != (uint8_t)request->quantity ||
+            adu[6] != (uint8_t)(request->value >> 8u) ||
+            adu[7] != (uint8_t)request->value) {
+            return 0;
+        }
     } else if (request->function == MBRTUM_FC_READ_FILE_RECORD) {
         size_t request_data_length = request->start_address;
         size_t response_data_length = 0u;

@@ -12,7 +12,7 @@ Implemented now:
 - configurable unicast slave address from 1 through 247
 - address 0 broadcast handling
 - silent discard of invalid CRC frames and frames for another slave
-- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `17`, and `2B/0E`
+- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `16`, `17`, and `2B/0E`
 - RTU-only FC11 Report Server ID processing with copied fixed-capacity data
 - normal and exception response framing
 - host tests for all supported function codes and RTU-specific behavior
@@ -80,10 +80,19 @@ For a broadcast request at address 0:
 - supported write-only functions are processed
 - no response is generated
 - read functions, FC11, FC20, FC23, FC43/14, and unsupported functions are ignored
-- FC21 is processed as a broadcast write and produces no response
+- FC21 and FC22 are processed as broadcast writes and produce no response
 - malformed writes do not modify the register map
 
 Frames with addresses 248 through 255 are reserved and are not accepted as configured slave addresses.
+
+## FC22 Mask Write Register
+
+FC22 is processed by the shared PDU engine for Modbus TCP and RTU. It performs
+one locked holding-register read-modify-write using the standard AND/OR mask
+formula and returns an exact request echo for unicast requests. The RTU wrapper
+also accepts address-zero FC22 broadcasts, applies the validated update, and
+suppresses the response. See
+[`modbus-fc22-mask-write-register.md`](modbus-fc22-mask-write-register.md).
 
 ## FC23 shared processing
 

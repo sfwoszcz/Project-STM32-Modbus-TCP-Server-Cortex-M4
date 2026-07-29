@@ -156,7 +156,8 @@ static int is_supported_write_function(uint8_t function)
 {
     return function == 0x05u || function == 0x06u ||
            function == 0x0Fu || function == 0x10u ||
-           function == MB_FILE_RECORD_WRITE_FUNCTION_CODE;
+           function == MB_FILE_RECORD_WRITE_FUNCTION_CODE ||
+           function == 0x16u;
 }
 
 static uint8_t response_exception_code(const uint8_t *response_pdu,
