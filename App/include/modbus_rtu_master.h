@@ -5,6 +5,7 @@
 #include "modbus_rtu_server_id.h"
 #include "modbus_device_id.h"
 #include "modbus_file_record.h"
+#include "modbus_fifo.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -31,6 +32,7 @@ extern "C" {
 #define MBRTUM_FC_WRITE_FILE_RECORD                 MB_FILE_RECORD_WRITE_FUNCTION_CODE
 #define MBRTUM_FC_MASK_WRITE_REGISTER              0x16u
 #define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
+#define MBRTUM_FC_READ_FIFO_QUEUE                  MB_FIFO_FUNCTION_CODE
 #define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MB_DEVICE_ID_FUNCTION_CODE
 
 /* Common Modbus exception codes returned by a remote slave. */
@@ -81,7 +83,9 @@ extern "C" {
  * subrequests. For FC22, start_address stores the holding-register address,
  * quantity stores the AND mask, and value stores the OR mask. For FC23,
  * start_address and quantity describe the read range, while write_start_address and
- * write_quantity describe the write range. For FC43/14, start_address stores
+ * write_quantity describe the write range. For FC24, start_address stores the
+ * FIFO Pointer Address and the remaining descriptor fields are zero. For
+ * FC43/14, start_address stores
  * the Read Device ID code, quantity stores the requested object ID, and value
  * stores the MEI type 0x0E. For FC11, quantity stores the expected
  * device-specific Server ID length. The remaining fields are zero for FC11,
@@ -107,7 +111,8 @@ typedef struct {
  * data points into the caller-owned response ADU and remains valid only while
  * that ADU remains unchanged. For FC01-FC04, FC11, and FC23 normal
  * responses, data references the validated function-specific data bytes after
- * the byte-count field.
+ * the byte-count field. For FC24, data references the two-byte FIFO Count
+ * followed by the queued register values.
  *
  * For successful write acknowledgements and exception responses, data is NULL
  * and data_length is zero.
@@ -195,6 +200,13 @@ typedef struct {
     size_t record_data_length;
     uint16_t record_length;
 } mbrtum_file_record_subresponse_t;
+
+/** Decoded zero-copy FC24 Read FIFO Queue response view. */
+typedef struct {
+    uint16_t fifo_count;
+    const uint8_t *values;
+    size_t values_length;
+} mbrtum_fifo_response_t;
 
 /**
  * Storage and overlap requirements.
@@ -383,6 +395,20 @@ int mbrtum_build_write_file_record_request(
     size_t *request_adu_length);
 
 /**
+ * Build an FC24 Read FIFO Queue RTU request ADU.
+ *
+ * slave_address must be 1-247. fifo_pointer_address is the address of the FIFO
+ * count register exposed by the remote device.
+ */
+int mbrtum_build_read_fifo_queue_request(
+    uint8_t slave_address,
+    uint16_t fifo_pointer_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC43/14 Read Device Identification RTU request ADU.
  *
  * slave_address must be 1-247. read_device_id_code must be one of Basic,
@@ -463,7 +489,7 @@ int mbrtum_build_report_server_id_request(
  * byte-for-byte. It is also required for FC20 so each subresponse can be
  * validated against its original subrequest and for FC21 so the complete
  * response echo can be matched against the original request. It supports all
- * ordinary requests, FC07/FC0B/FC0C/FC11, FC23, and FC43/14.
+ * ordinary requests, FC07/FC0B/FC0C/FC11, FC23, FC24, and FC43/14.
  */
 int mbrtum_process_response_with_request_adu(
     const mbrtum_request_t *request,
@@ -567,6 +593,17 @@ int mbrtum_get_file_record_subresponse(
 /** Read one register from a decoded FC20 subresponse. */
 int mbrtum_get_file_record_register(
     const mbrtum_file_record_subresponse_t *subresponse,
+    uint16_t index,
+    uint16_t *value);
+
+/** Decode a validated FC24 response into a zero-copy FIFO view. */
+int mbrtum_get_fifo_response(
+    const mbrtum_response_t *response,
+    mbrtum_fifo_response_t *fifo_response);
+
+/** Read one queued register from a decoded FC24 FIFO view. */
+int mbrtum_get_fifo_register(
+    const mbrtum_fifo_response_t *fifo_response,
     uint16_t index,
     uint16_t *value);
 

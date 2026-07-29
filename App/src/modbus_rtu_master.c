@@ -7,6 +7,7 @@
 #define MBRTUM_FIXED_REQUEST_ADU_SIZE 8u
 #define MBRTUM_WRITE_ACK_ADU_SIZE 8u
 #define MBRTUM_MASK_WRITE_ADU_SIZE 10u
+#define MBRTUM_FIFO_REQUEST_ADU_SIZE 6u
 #define MBRTUM_EXCEPTION_ADU_SIZE 5u
 
 static uint16_t read_be16(const uint8_t *p)
@@ -712,6 +713,44 @@ int mbrtum_build_write_file_record_request(
     return MBRTUM_OK;
 }
 
+
+int mbrtum_build_read_fifo_queue_request(
+    uint8_t slave_address,
+    uint16_t fifo_pointer_address,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length)
+{
+    if (request_adu_length != NULL) {
+        *request_adu_length = 0u;
+    }
+    clear_request(request);
+
+    if (request == NULL || request_adu == NULL ||
+        request_adu_length == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (!unicast_address_is_valid(slave_address)) {
+        return MBRTUM_ERROR_SLAVE_ADDRESS;
+    }
+    if (request_adu_capacity < MBRTUM_FIFO_REQUEST_ADU_SIZE) {
+        return MBRTUM_ERROR_CAPACITY;
+    }
+
+    request_adu[0] = slave_address;
+    request_adu[1] = MBRTUM_FC_READ_FIFO_QUEUE;
+    write_be16(&request_adu[2], fifo_pointer_address);
+    *request_adu_length = append_crc(request_adu, 4u);
+    finish_request(request,
+                   slave_address,
+                   MBRTUM_FC_READ_FIFO_QUEUE,
+                   fifo_pointer_address,
+                   0u,
+                   0u);
+    return MBRTUM_OK;
+}
+
 int mbrtum_build_read_device_identification_request(
     uint8_t slave_address,
     uint8_t read_device_id_code,
@@ -1073,6 +1112,13 @@ static int validate_request_descriptor(const mbrtum_request_t *request)
             request->quantity == 0u ||
             request->quantity > MBRTU_SERVER_ID_MAX_SERVER_ID_LENGTH ||
             request->value != 0u ||
+            request->write_start_address != 0u ||
+            request->write_quantity != 0u) {
+            return MBRTUM_ERROR_VALUE;
+        }
+        break;
+    case MBRTUM_FC_READ_FIFO_QUEUE:
+        if (request->quantity != 0u || request->value != 0u ||
             request->write_start_address != 0u ||
             request->write_quantity != 0u) {
             return MBRTUM_ERROR_VALUE;
@@ -1533,6 +1579,36 @@ int mbrtum_process_response_with_request_adu(
         return MBRTUM_OK;
     }
 
+    case MBRTUM_FC_READ_FIFO_QUEUE: {
+        size_t byte_count;
+        size_t expected_byte_count;
+        size_t expected_length;
+        uint16_t fifo_count;
+
+        if (response_adu_length < 8u) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+        byte_count = read_be16(&response_adu[2]);
+        fifo_count = read_be16(&response_adu[4]);
+        if (fifo_count > MB_FIFO_MAX_VALUES) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        expected_byte_count = 2u + ((size_t)fifo_count * 2u);
+        if (byte_count != expected_byte_count ||
+            byte_count > MB_FIFO_MAX_BYTE_COUNT) {
+            return MBRTUM_ERROR_MALFORMED_RESPONSE;
+        }
+        expected_length = 6u + byte_count;
+        if (response_adu_length != expected_length) {
+            return MBRTUM_ERROR_RESPONSE_LENGTH;
+        }
+
+        response->function = request->function;
+        response->data = &response_adu[4];
+        response->data_length = byte_count;
+        return MBRTUM_OK;
+    }
+
     case MBRTUM_FC_READ_DEVICE_IDENTIFICATION: {
         uint8_t read_code;
         uint8_t conformity_level;
@@ -1973,6 +2049,68 @@ int mbrtum_get_file_record_register(
     }
     offset = (size_t)index * 2u;
     *value = read_be16(&subresponse->record_data[offset]);
+    return MBRTUM_OK;
+}
+
+
+int mbrtum_get_fifo_response(
+    const mbrtum_response_t *response,
+    mbrtum_fifo_response_t *fifo_response)
+{
+    uint16_t fifo_count;
+    size_t expected_length;
+
+    if (response == NULL || fifo_response == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    memset(fifo_response, 0, sizeof(*fifo_response));
+    if (response->exception_code != 0u ||
+        response->function != MBRTUM_FC_READ_FIFO_QUEUE ||
+        response->data == NULL || response->data_length < 2u ||
+        response->data_length > MB_FIFO_MAX_BYTE_COUNT) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+
+    fifo_count = read_be16(response->data);
+    if (fifo_count > MB_FIFO_MAX_VALUES) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+    expected_length = 2u + ((size_t)fifo_count * 2u);
+    if (response->data_length != expected_length) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+
+    fifo_response->fifo_count = fifo_count;
+    fifo_response->values_length = (size_t)fifo_count * 2u;
+    fifo_response->values =
+        fifo_response->values_length > 0u ? &response->data[2] : NULL;
+    return MBRTUM_OK;
+}
+
+int mbrtum_get_fifo_register(
+    const mbrtum_fifo_response_t *fifo_response,
+    uint16_t index,
+    uint16_t *value)
+{
+    size_t offset;
+
+    if (fifo_response == NULL || value == NULL) {
+        return MBRTUM_ERROR_ARGUMENT;
+    }
+    if (fifo_response->fifo_count > MB_FIFO_MAX_VALUES ||
+        fifo_response->values_length !=
+            (size_t)fifo_response->fifo_count * 2u) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+    if (index >= fifo_response->fifo_count) {
+        return MBRTUM_ERROR_INDEX;
+    }
+    if (fifo_response->values == NULL) {
+        return MBRTUM_ERROR_MALFORMED_RESPONSE;
+    }
+
+    offset = (size_t)index * 2u;
+    *value = read_be16(&fifo_response->values[offset]);
     return MBRTUM_OK;
 }
 

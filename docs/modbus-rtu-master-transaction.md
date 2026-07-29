@@ -89,6 +89,15 @@ expectation, and CRC against the immutable request descriptor. Unicast replies
 reuse the exact acknowledgement validator. Broadcast requests complete after
 transmit completion without starting a response deadline.
 
+## FC24 support
+
+The transaction engine accepts FC24 requests produced by
+`mbrtum_build_read_fifo_queue_request()`. Before transmission it validates the
+exact six-byte ADU, unicast address, FIFO Pointer Address, zero-valued unused
+descriptor fields, response expectation, and CRC against the immutable request
+descriptor. Normal, exception, malformed, unrelated, timeout, and retry
+handling reuse the common state machine.
+
 ## FC23 support
 
 The transaction engine accepts FC23 requests produced by

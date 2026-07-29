@@ -12,7 +12,7 @@ Implemented now:
 - configurable unicast slave address from 1 through 247
 - address 0 broadcast handling
 - silent discard of invalid CRC frames and frames for another slave
-- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `16`, `17`, and `2B/0E`
+- shared processing of function codes `01`, `02`, `03`, `04`, `05`, `06`, `0F`, `10`, `14`, `15`, `16`, `17`, `18`, and `2B/0E`
 - RTU-only FC11 Report Server ID processing with copied fixed-capacity data
 - normal and exception response framing
 - host tests for all supported function codes and RTU-specific behavior
@@ -79,7 +79,7 @@ For a broadcast request at address 0:
 
 - supported write-only functions are processed
 - no response is generated
-- read functions, FC11, FC20, FC23, FC43/14, and unsupported functions are ignored
+- read functions, FC11, FC20, FC23, FC24, FC43/14, and unsupported functions are ignored
 - FC21 and FC22 are processed as broadcast writes and produce no response
 - malformed writes do not modify the register map
 
@@ -101,6 +101,16 @@ Modbus TCP and RTU unicast requests. The core validates both holding-register
 ranges, quantities, byte count, exact request length, and response capacity
 before changing the map. The write is then performed before the read. See
 [`modbus-fc23.md`](modbus-fc23.md) for the complete contract.
+
+## FC24 Read FIFO Queue
+
+FC24 is processed by the shared PDU engine for Modbus TCP and RTU unicast
+requests. It reads a non-destructive snapshot from a configured
+application-owned register block, returns a two-byte Byte Count and FIFO Count,
+and includes up to 31 queued register values. Unknown pointer addresses return
+Illegal Data Address, counts above 31 return Illegal Data Value, and
+inconsistent storage returns Server Device Failure. See
+[`modbus-fc24-read-fifo-queue.md`](modbus-fc24-read-fifo-queue.md).
 
 ## CRC-16
 

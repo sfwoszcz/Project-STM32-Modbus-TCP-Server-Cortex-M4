@@ -7,6 +7,8 @@
 #include "modbus_device_id_internal.h"
 #include "modbus_file_record.h"
 #include "modbus_file_record_internal.h"
+#include "modbus_fifo.h"
+#include "modbus_fifo_internal.h"
 #include "platform_port.h"
 
 #include <string.h>
@@ -237,6 +239,13 @@ static uint8_t process_pdu_function(const uint8_t *pdu,
         *response_len = 7u;
         return 0u;
     }
+
+    case MB_FIFO_FUNCTION_CODE: /* Read FIFO Queue */
+        return mb_fifo_process_read_request(pdu,
+                                            pdu_len,
+                                            response,
+                                            response_capacity,
+                                            response_len);
 
     case 0x17u: { /* Read/Write Multiple Holding Registers */
         uint16_t read_address;
