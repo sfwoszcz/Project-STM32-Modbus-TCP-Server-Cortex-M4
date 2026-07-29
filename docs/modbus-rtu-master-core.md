@@ -25,7 +25,7 @@ Implemented now:
 - zero-valued unused padding validation for packed-bit responses
 - exact single-write address/value acknowledgement validation
 - exact multiple-write address/quantity acknowledgement validation
-- zero-copy bit, register, FC20 subresponse, and FC43/14 object access helpers
+- zero-copy bit, register, FC20 subresponse, generic FC43 MEI, and FC43/14 object access helpers
 - exact FC21 request-echo validation
 - exact FC22 address and mask acknowledgement validation
 - strict host tests and integration with Make, CMake, and CTest
@@ -132,7 +132,7 @@ The compact fields are reused by function-specific builders:
 - `value` contains the written register value for FC06;
 - `quantity` contains the AND mask and `value` contains the OR mask for FC22;
 - `start_address` contains the FIFO Pointer Address for FC24;
-- the dedicated FC20, FC21, FC23, FC24, FC43/14, and FC11 sections describe their
+- the dedicated FC20, FC21, FC23, FC24, generic FC43, FC43/14, and FC11 sections describe their
   field mappings;
 - unused fields are zero.
 
@@ -361,7 +361,7 @@ The transport must transmit the request and must not wait for a response.
 Calling `mbrtum_process_response()` with a broadcast request returns
 `MBRTUM_ERROR_RESPONSE_NOT_EXPECTED`.
 
-Read builders, including FC20, FC23, and FC24, reject address zero. FC21 and FC22
+Read builders, including FC20, FC23, FC24, and generic FC43, reject address zero. FC21 and FC22
 accept address zero because they are write-only functions.
 
 ## Modbus exception responses
@@ -465,13 +465,13 @@ remains unchanged.
 `Tests/host/test_modbus_fc23.c`, and
 `Tests/host/test_modbus_fc24.c` verify:
 
-- all ordinary supported request builders, including FC20, FC21, FC22, FC23, and FC24
+- all ordinary supported request builders, including FC20, FC21, FC22, FC23, FC24, and generic FC43
 - known request field layouts and generated CRCs
 - unicast and broadcast behavior
 - maximum FC0F, FC10, FC20, FC21, and FC23 request sizes
 - output-capacity failures
 - address-range overflow rejection
-- normal bit, register, FC20 subresponse, FC21 echo, FC22 mask acknowledgement, FC23 register, and FC24 FIFO response validation
+- normal bit, register, FC20 subresponse, FC21 echo, FC22 mask acknowledgement, FC23 register, FC24 FIFO, and generic FC43 echoed-MEI response validation
 - index validation
 - Modbus exception responses
 - invalid exception code and exception length rejection
@@ -485,6 +485,7 @@ remains unchanged.
 - FC21 complete-request echo mismatch rejection
 - FC22 address and mask acknowledgement mismatch rejection
 - FC24 Byte Count/FIFO Count mismatch and count-limit rejection
+- generic FC43 echoed-MEI mismatch, CRC, length, and exception rejection
 - API argument validation
 
 Run the complete verification suite with:
@@ -502,7 +503,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 The CTest suite includes dedicated `rtu_master`, `fc20`, `fc21`, `fc22`,
-`fc23`, `fc24`, and `fc43_device_id` tests.
+`fc23`, `fc24`, `fc43_mei`, and `fc43_device_id` tests.
 
 ## Transport boundary
 
@@ -511,6 +512,24 @@ retry scheduling, and RS-485 direction control. The portable transaction engine
 adds request ownership, deadlines, retries, and transport events above this
 layer. STM32 UART reception, timer integration, and RS-485 DE/RE control remain
 in board-specific adapters.
+
+## Generic FC43 Encapsulated Interface Transport
+
+`mbrtum_build_mei_request()` builds complete RTU requests containing function
+`0x2B`, one MEI type byte, zero through 251 interface-specific bytes, and a
+low-byte-first CRC. The descriptor stores the MEI-data length in
+`start_address`, zero in `quantity`, and the MEI type in `value`.
+
+The generic builder rejects broadcast addresses, MEI `0x0D` CANopen, and MEI
+`0x0E` Device Identification. The latter continues to use the dedicated
+FC43/14 builder so its access code, object ID, conformity, segmentation, and
+object list receive strict validation.
+
+Generic response validation checks the complete ADU, CRC, slave address,
+function, maximum length, and echoed MEI type. Interface-specific semantics are
+outside the transport envelope. `mbrtum_get_mei_response()` returns a zero-copy
+view containing the echoed type and remaining interface data. See
+`docs/modbus-fc43-mei-transport.md`.
 
 ## FC43/14 Device Identification
 

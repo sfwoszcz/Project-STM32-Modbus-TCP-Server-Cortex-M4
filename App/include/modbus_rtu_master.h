@@ -6,6 +6,7 @@
 #include "modbus_device_id.h"
 #include "modbus_file_record.h"
 #include "modbus_fifo.h"
+#include "modbus_mei.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -33,7 +34,8 @@ extern "C" {
 #define MBRTUM_FC_MASK_WRITE_REGISTER              0x16u
 #define MBRTUM_FC_READ_WRITE_MULTIPLE_REGISTERS    0x17u
 #define MBRTUM_FC_READ_FIFO_QUEUE                  MB_FIFO_FUNCTION_CODE
-#define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MB_DEVICE_ID_FUNCTION_CODE
+#define MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT MB_MEI_FUNCTION_CODE
+#define MBRTUM_FC_READ_DEVICE_IDENTIFICATION        MBRTUM_FC_ENCAPSULATED_INTERFACE_TRANSPORT
 
 /* Common Modbus exception codes returned by a remote slave. */
 #define MBRTUM_EXCEPTION_ILLEGAL_FUNCTION          0x01u
@@ -85,9 +87,11 @@ extern "C" {
  * start_address and quantity describe the read range, while write_start_address and
  * write_quantity describe the write range. For FC24, start_address stores the
  * FIFO Pointer Address and the remaining descriptor fields are zero. For
- * FC43/14, start_address stores
- * the Read Device ID code, quantity stores the requested object ID, and value
- * stores the MEI type 0x0E. For FC11, quantity stores the expected
+ * Generic FC43 stores the MEI-data length in start_address, zero in quantity,
+ * and the MEI type in value. FC43/14 retains its stricter descriptor:
+ * start_address stores the Read Device ID code, quantity stores the requested
+ * object ID, and value stores MEI type 0x0E. For FC11, quantity stores the
+ * expected
  * device-specific Server ID length. The remaining fields are zero for FC11,
  * and all descriptor fields are zero for FC07, FC0B, and FC0C.
  *
@@ -112,7 +116,8 @@ typedef struct {
  * that ADU remains unchanged. For FC01-FC04, FC11, and FC23 normal
  * responses, data references the validated function-specific data bytes after
  * the byte-count field. For FC24, data references the two-byte FIFO Count
- * followed by the queued register values.
+ * followed by the queued register values. For FC43, data starts with the echoed
+ * MEI type followed by the interface-specific response bytes.
  *
  * For successful write acknowledgements and exception responses, data is NULL
  * and data_length is zero.
@@ -152,6 +157,13 @@ typedef struct {
     const uint8_t *additional_data;
     size_t additional_data_length;
 } mbrtum_server_id_response_t;
+
+/** Decoded zero-copy generic FC43 Encapsulated Interface response view. */
+typedef struct {
+    uint8_t mei_type;
+    const uint8_t *data;
+    size_t data_length;
+} mbrtum_mei_response_t;
 
 /** Decoded zero-copy FC43/14 response view. */
 typedef struct {
@@ -409,6 +421,25 @@ int mbrtum_build_read_fifo_queue_request(
     size_t *request_adu_length);
 
 /**
+ * Build a generic FC43 Encapsulated Interface Transport RTU request ADU.
+ *
+ * slave_address must be 1-247. mei_data may contain zero to 251 bytes. MEI
+ * type 0x0D is rejected because CANopen is outside this project, and type 0x0E
+ * must use mbrtum_build_read_device_identification_request() so its request and
+ * response receive strict protocol-specific validation. mei_data must not
+ * overlap request_adu.
+ */
+int mbrtum_build_mei_request(
+    uint8_t slave_address,
+    uint8_t mei_type,
+    const uint8_t *mei_data,
+    size_t mei_data_length,
+    mbrtum_request_t *request,
+    uint8_t *request_adu,
+    size_t request_adu_capacity,
+    size_t *request_adu_length);
+
+/**
  * Build an FC43/14 Read Device Identification RTU request ADU.
  *
  * slave_address must be 1-247. read_device_id_code must be one of Basic,
@@ -606,6 +637,11 @@ int mbrtum_get_fifo_register(
     const mbrtum_fifo_response_t *fifo_response,
     uint16_t index,
     uint16_t *value);
+
+/** Decode a validated generic FC43 response into a zero-copy view. */
+int mbrtum_get_mei_response(
+    const mbrtum_response_t *response,
+    mbrtum_mei_response_t *mei_response);
 
 /** Decode a validated FC43/14 response into a zero-copy view. */
 int mbrtum_get_device_id_response(

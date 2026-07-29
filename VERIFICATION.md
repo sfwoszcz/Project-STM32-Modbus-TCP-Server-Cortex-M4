@@ -20,6 +20,7 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus RTU diagnostics tests | Pass |
 | Modbus FC11 Report Server ID tests | Pass |
 | Modbus FC23 shared/RTU/TCP/master tests | Pass |
+| Modbus FC43 generic MEI transport tests | Pass |
 | Modbus FC43/14 device-identification tests | Pass |
 | Modbus FC20 Read File Record tests | Pass |
 | Modbus FC21 Write File Record tests | Pass |
@@ -29,7 +30,7 @@ External STM32F767 hardware evidence updated on 2026-07-21.
 | Modbus TCP ADU regression tests | Pass |
 | POSIX TCP integration smoke test | Pass |
 | lwIP transport compile check | Pass |
-| CMake configure/build/CTest (17 tests) | Pass |
+| CMake configure/build/CTest (18 tests) | Pass |
 | SVG XML validation and PNG rendering | Pass |
 
 The strict warning set is:
@@ -43,7 +44,7 @@ The strict warning set is:
 The host RTU suite verifies:
 
 - CRC calculation, wire byte order, and corruption rejection
-- all ordinary supported function codes, including FC21, FC22, FC23, and FC24, through RTU framing
+- all ordinary supported function codes, including FC21, FC22, FC23, FC24, and generic FC43, through RTU framing
 - normal and exception response CRCs
 - configurable slave addressing
 - silent discard of wrong-address and invalid-CRC frames
@@ -61,9 +62,9 @@ The host RTU suite verifies:
 
 ## RTU master coverage
 
-The host RTU master plus dedicated FC11, FC20, FC21, FC22, FC23, FC24, and FC43/14 suites verify:
+The host RTU master plus dedicated FC11, FC20, FC21, FC22, FC23, FC24, generic FC43, and FC43/14 suites verify:
 
-- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC11, FC20, FC21, FC22, FC23, FC24, and FC43/14 request generation
+- FC01, FC02, FC03, FC04, FC05, FC06, FC0F, FC10, FC11, FC20, FC21, FC22, FC23, FC24, generic FC43, and FC43/14 request generation
 - low-byte-first request CRC generation
 - unicast requests and broadcast-write behavior
 - quantity, value, capacity, and 16-bit address-range validation
@@ -78,7 +79,7 @@ The host RTU master plus dedicated FC11, FC20, FC21, FC22, FC23, FC24, and FC43/
 - exact FC22 address, AND-mask, and OR-mask acknowledgement validation
 - exact FC23 response byte-count and length validation
 - exact FC24 two-byte Byte Count, FIFO Count, count limit, and length validation
-- zero-copy bit, register, FC11, FC20 subresponse, FC24 FIFO, and device-identification object decoding with index validation
+- zero-copy bit, register, FC11, FC20 subresponse, FC24 FIFO, generic FC43 MEI, and device-identification object decoding with index validation
 - malformed response and API argument rejection
 
 ## FC11 Report Server ID coverage
@@ -197,6 +198,21 @@ The dedicated FC23 suite verifies:
 - exact master response validation and zero-copy register decoding
 - master transaction-engine descriptor/ADU validation and successful completion
 
+## FC43 generic Encapsulated Interface Transport coverage
+
+The dedicated generic FC43 suite verifies:
+
+- fixed-capacity registration, replacement, removal, capacity, and reset;
+- protection of MEI `0x0D` CANopen and built-in MEI `0x0E` Device Identification;
+- no handler enabled by default and deterministic unsupported-type exceptions;
+- zero through 251 request and response interface bytes;
+- handler-returned Modbus exceptions, invalid returns, capacity failures, and
+  oversized response reporting;
+- shared PDU, Modbus TCP, Modbus RTU, CRC, and maximum-size 253-byte PDU paths;
+- preservation of the existing FC43/14 Device Identification behavior;
+- generic RTU master request generation, echoed-type validation, exceptions,
+  zero-copy decoding, and transaction completion.
+
 ## FC43/14 Device Identification coverage
 
 The dedicated FC43/14 suite verifies:
@@ -269,7 +285,7 @@ The host transaction suite verifies:
 
 ## Scope
 
-The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics and FC11 Server ID subsystems, fixed-capacity FC43/14 device-identification object model, fixed-capacity application file-record map, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
+The shared Modbus PDU core, backward-compatible TCP ADU wrapper, portable CRC-16 implementation, complete-frame RTU slave ADU wrapper, fixed-capacity serial-line diagnostics and FC11 Server ID subsystems, fixed-capacity generic FC43 MEI handler registry, fixed-capacity FC43/14 device-identification object model, fixed-capacity application file-record map, portable complete-frame RTU master request/response core, portable RTU master transaction engine, host demonstration, tests, and lwIP-facing application sources are verified.
 
 The portable RTU byte-receive/timing state machine, fixed 50 microsecond tick API, T1.5/T3.5 frame detection, buffering, and recovery are host verified. The STM32 UART/timer adapter and physical hardware validation remain outside this stage.
 

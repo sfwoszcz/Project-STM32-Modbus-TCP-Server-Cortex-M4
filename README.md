@@ -4,7 +4,7 @@
 
 # STM32 Modbus TCP Server for Cortex‑M4
 
-A compact Modbus implementation written in portable C11, with an STM32/lwIP raw-API TCP transport, host-tested Modbus RTU slave and master ADU cores, serial-line-only RTU diagnostics and FC11 Server ID reporting, a portable RTU master transaction engine with deterministic timeouts and retries, a deterministic in-memory register map, fixed-capacity application file records with read/write support, application-owned FIFO queue snapshots, strict request validation, and no heap allocation in the request path.
+A compact Modbus implementation written in portable C11, with an STM32/lwIP raw-API TCP transport, host-tested Modbus RTU slave and master ADU cores, serial-line-only RTU diagnostics and FC11 Server ID reporting, a portable RTU master transaction engine with deterministic timeouts and retries, a deterministic in-memory register map, fixed-capacity application file records with read/write support, application-owned FIFO queue snapshots, a bounded application-configurable FC43 MEI transport registry, strict request validation, and no heap allocation in the request path.
 
 The repository builds and tests on a normal Linux/macOS development machine. The RTU slave layer validates complete frames, provides single-byte receive and fixed 50 microsecond timing entry points, detects T1.5/T3.5 boundaries, and reuses the same PDU engine as TCP. The separate RTU master core builds complete requests and validates complete responses without depending on hardware. The portable master transaction engine adds one-outstanding-request state management, response deadlines, retry delays, transport-completion/error events, broadcast completion, and bounded diagnostics. UART receive framing, board-specific UART/timer glue, RS-485 direction control, and CubeMX integration remain separate.
 
@@ -26,7 +26,7 @@ make test
 - host tests for RTU master transaction state, deadlines, retries, transport events, broadcast handling, and diagnostics
 - dedicated FC07/FC08/FC0B/FC0C slave, master, event-log, policy, listen-only, transaction, and TCP-rejection tests
 - dedicated FC11 configuration, RTU-only dispatch, master, transaction, maximum-size, and TCP-rejection tests
-- dedicated FC20, FC21, FC22, FC23, FC24, and FC43/14 shared-PDU, TCP, RTU, master, transaction, boundary, and malformed-frame tests
+- dedicated FC20, FC21, FC22, FC23, FC24, FC43 generic-MEI, and FC43/14 shared-PDU, TCP, RTU, master, transaction, boundary, and malformed-frame tests
 - fake-timer tests for T1.5/T3.5, buffering, overflow, recovery, and transmit dispatch
 - C unit tests for the register map and Modbus TCP ADU wrapper
 - the on-device register self-test as a host executable
@@ -43,10 +43,10 @@ A GitHub Actions workflow and a Docker build are included.
 
 The design separates the shared PDU engine from transport framing and network I/O:
 
-- `mb_process_pdu()` dispatches shared function codes, including FC20 Read File Record, FC21 Write File Record, FC22 Mask Write Register, FC23 Read/Write Multiple Registers, FC24 Read FIFO Queue, and FC43/14 Read Device Identification, and creates normal or exception response PDUs without TCP-specific framing.
+- `mb_process_pdu()` dispatches shared function codes, including FC20 Read File Record, FC21 Write File Record, FC22 Mask Write Register, FC23 Read/Write Multiple Registers, FC24 Read FIFO Queue, generic FC43 Encapsulated Interface Transport, and FC43/14 Read Device Identification, and creates normal or exception response PDUs without TCP-specific framing.
 - `mbtcp_process_adu()` validates MBAP fields, invokes the shared PDU API, and builds the Modbus TCP response ADU.
 - `mbrtu_process_adu()` preserves the ordinary-function RTU path and adds an opt-in RTU-only FC11 dispatcher, while `mbrtu_process_adu_with_diagnostics()` adds FC07, FC08, FC0B, and FC0C.
-- `mbrtum_build_*_request()` creates complete RTU master requests, including FC11, FC20, FC21, FC22, FC23, FC24, and FC43/14; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
+- `mbrtum_build_*_request()` creates complete RTU master requests, including FC11, FC20, FC21, FC22, FC23, FC24, generic FC43, and FC43/14; the diagnostics builders and request-ADU-aware validator add strict FC07/FC08/FC0B/FC0C master support.
 - `mbrtum_transaction_*()` owns one active request, drives asynchronous transmit/wait/retry states, enforces wrap-safe deadlines, reuses the complete-frame master validator, and exposes bounded diagnostics.
 - `mbrtu_on_rx_byte_isr()` and `mbrtu_on_50us_tick_isr()` assemble frames with minimal interrupt work; `mbrtu_poll()` processes and transmits them from the main loop.
 - `mb_crc16()` implements the Modbus serial-line CRC-16 with low-byte-first wire order.
@@ -76,6 +76,7 @@ The design separates the shared PDU engine from transport framing and network I/
 | Mask Write Register | `0x16` | 1 holding register | TCP and RTU |
 | Read/Write Multiple Registers | `0x17` | Read 125, write 121 registers | TCP and RTU |
 | Read FIFO Queue | `0x18` | 31 queued registers | TCP and RTU |
+| Encapsulated Interface Transport | `0x2B` | 251 interface bytes | TCP and RTU |
 | Read Device Identification | `0x2B / 0x0E` | Segmented object list | TCP and RTU |
 
 Illegal functions, addresses, quantities, byte counts, and values produce standard Modbus exception responses. Serial-line-only diagnostics and FC11 are deliberately absent from the Modbus TCP dispatcher and return Illegal Function over TCP.
@@ -115,6 +116,13 @@ queued register values. See
 [`docs/modbus-fc24-read-fifo-queue.md`](docs/modbus-fc24-read-fifo-queue.md)
 for the configuration API, exception rules, master decoding, and tests.
 
+FC43 generic Encapsulated Interface Transport provides a fixed-capacity
+application handler registry for bounded `[0x2B][MEI type][MEI data]` requests
+and responses. MEI `0x0D` CANopen is intentionally unsupported, MEI `0x0E`
+continues to use the built-in strict Device Identification implementation, and
+all other types are disabled until explicitly registered. See
+[`docs/modbus-fc43-mei-transport.md`](docs/modbus-fc43-mei-transport.md).
+
 FC43/14 uses fixed-capacity application-configured identification objects,
 including mandatory Basic objects, optional Regular objects, and private
 Extended objects. Stream responses segment only at object boundaries and use
@@ -130,6 +138,7 @@ App/
 │   ├── modbus_device_id.h    Fixed-capacity FC43/14 object configuration
 │   ├── modbus_file_record.h  Fixed-capacity application file-record map
 │   ├── modbus_fifo.h         Fixed-capacity FC24 FIFO descriptor map
+│   ├── modbus_mei.h          Generic FC43 handler registration API
 │   ├── modbus_pdu.h          Shared transport-independent PDU API
 │   ├── modbus_protocol.h     Backward-compatible Modbus TCP ADU API
 │   ├── modbus_crc16.h        Portable Modbus serial CRC-16 API
@@ -149,7 +158,9 @@ App/
     │                          Internal FC43/14 PDU integration helper
     ├── modbus_file_record_internal.h
     ├── modbus_fifo_internal.h
-    │                          Internal FC20/FC21 PDU integration helper
+    │                          Internal FC24 PDU integration helper
+    ├── modbus_mei_internal.h
+    │                          Internal generic FC43 dispatch helper
     ├── modbus_protocol.c     Shared PDU engine and TCP ADU wrapper
     ├── modbus_crc16.c        Table-free Modbus CRC-16 implementation
     ├── modbus_rtu.c          RTU ADU and bare-metal timing state machine
@@ -222,6 +233,7 @@ modbus RTU diagnostics tests: PASS
 Modbus FC11 Report Server ID tests: PASS
 Modbus FC23 tests: PASS
 Modbus FC43/14 device identification tests: PASS
+Modbus FC43 generic MEI transport tests: PASS
 Modbus FC20 Read File Record tests: PASS
 Modbus FC21 Write File Record tests: PASS
 Modbus FC22 Mask Write Register tests: PASS
@@ -350,7 +362,7 @@ FC0F, FC10, FC11, FC20, FC21, FC22, FC23, FC24, and FC43/14 request ADUs and val
 the original request descriptor. It checks CRC, address, function, byte count,
 packed-bit padding, write acknowledgements, FC11 device-specific Server ID
 length and run-status data, FC20 subresponses, FC21 exact echoes, FC22 mask
-acknowledgements, FC23 read data, FC24 FIFO count/value data, FC43/14 object lists, and Modbus
+acknowledgements, FC23 read data, FC24 FIFO count/value data, generic FC43 MEI payloads, FC43/14 object lists, and Modbus
 exception responses.
 
 The complete-frame master core intentionally does not own UART framing,

@@ -6,6 +6,8 @@
 #include "modbus_file_record_internal.h"
 #include "modbus_fifo.h"
 #include "modbus_fifo_internal.h"
+#include "modbus_mei.h"
+#include "modbus_mei_internal.h"
 #include "modbus_pdu.h"
 
 #include <string.h>
@@ -52,6 +54,19 @@ typedef struct {
 } mb_fifo_state_t;
 
 static mb_fifo_state_t fifo_state;
+
+typedef struct {
+    uint8_t in_use;
+    uint8_t mei_type;
+    mb_mei_handler_fn handler;
+    void *context;
+} mb_mei_handler_entry_t;
+
+typedef struct {
+    mb_mei_handler_entry_t handlers[MB_MEI_MAX_HANDLERS];
+} mb_mei_state_t;
+
+static mb_mei_state_t mei_state;
 
 static int conformity_level_is_valid(uint8_t conformity_level)
 {
@@ -116,6 +131,11 @@ static void clear_fifos_unlocked(void)
     memset(&fifo_state, 0, sizeof(fifo_state));
 }
 
+static void clear_mei_handlers_unlocked(void)
+{
+    memset(&mei_state, 0, sizeof(mei_state));
+}
+
 void mb_init(void)
 {
     mb_lock();
@@ -126,7 +146,192 @@ void mb_init(void)
     clear_device_id_unlocked();
     clear_file_records_unlocked();
     clear_fifos_unlocked();
+    clear_mei_handlers_unlocked();
     mb_unlock();
+}
+
+static int mei_exception_is_valid(uint8_t exception_code)
+{
+    return (exception_code >= MB_MEI_EXCEPTION_ILLEGAL_FUNCTION &&
+            exception_code <= MB_MEI_EXCEPTION_MEMORY_PARITY_ERROR) ||
+           exception_code == MB_MEI_EXCEPTION_GATEWAY_PATH_UNAVAILABLE ||
+           exception_code == MB_MEI_EXCEPTION_GATEWAY_TARGET_FAILED;
+}
+
+static int mei_type_is_application_configurable(uint8_t mei_type)
+{
+    return mei_type != MB_MEI_TYPE_CANOPEN_GENERAL_REFERENCE &&
+           mei_type != MB_MEI_TYPE_READ_DEVICE_IDENTIFICATION;
+}
+
+int mb_mei_register_handler(uint8_t mei_type,
+                            mb_mei_handler_fn handler,
+                            void *context)
+{
+    size_t free_index = MB_MEI_MAX_HANDLERS;
+
+    if (handler == NULL) {
+        return MB_MEI_ERROR_ARGUMENT;
+    }
+    if (!mei_type_is_application_configurable(mei_type)) {
+        return MB_MEI_ERROR_TYPE;
+    }
+
+    mb_lock();
+    for (size_t i = 0u; i < MB_MEI_MAX_HANDLERS; ++i) {
+        if (mei_state.handlers[i].in_use != 0u) {
+            if (mei_state.handlers[i].mei_type == mei_type) {
+                mei_state.handlers[i].handler = handler;
+                mei_state.handlers[i].context = context;
+                mb_unlock();
+                return MB_MEI_OK;
+            }
+        } else if (free_index == MB_MEI_MAX_HANDLERS) {
+            free_index = i;
+        }
+    }
+
+    if (free_index == MB_MEI_MAX_HANDLERS) {
+        mb_unlock();
+        return MB_MEI_ERROR_CAPACITY;
+    }
+
+    mei_state.handlers[free_index].in_use = 1u;
+    mei_state.handlers[free_index].mei_type = mei_type;
+    mei_state.handlers[free_index].handler = handler;
+    mei_state.handlers[free_index].context = context;
+    mb_unlock();
+    return MB_MEI_OK;
+}
+
+int mb_mei_unregister_handler(uint8_t mei_type)
+{
+    if (!mei_type_is_application_configurable(mei_type)) {
+        return MB_MEI_ERROR_TYPE;
+    }
+
+    mb_lock();
+    for (size_t i = 0u; i < MB_MEI_MAX_HANDLERS; ++i) {
+        if (mei_state.handlers[i].in_use != 0u &&
+            mei_state.handlers[i].mei_type == mei_type) {
+            memset(&mei_state.handlers[i], 0, sizeof(mei_state.handlers[i]));
+            mb_unlock();
+            return MB_MEI_OK;
+        }
+    }
+    mb_unlock();
+    return MB_MEI_ERROR_NOT_FOUND;
+}
+
+void mb_mei_clear_handlers(void)
+{
+    mb_lock();
+    clear_mei_handlers_unlocked();
+    mb_unlock();
+}
+
+int mb_mei_is_registered(uint8_t mei_type)
+{
+    int registered = 0;
+
+    if (!mei_type_is_application_configurable(mei_type)) {
+        return 0;
+    }
+
+    mb_lock();
+    for (size_t i = 0u; i < MB_MEI_MAX_HANDLERS; ++i) {
+        if (mei_state.handlers[i].in_use != 0u &&
+            mei_state.handlers[i].mei_type == mei_type) {
+            registered = 1;
+            break;
+        }
+    }
+    mb_unlock();
+    return registered;
+}
+
+uint8_t mb_mei_process_request(const uint8_t *request_pdu,
+                               size_t request_pdu_len,
+                               uint8_t *response_pdu,
+                               size_t response_capacity,
+                               size_t *response_pdu_len)
+{
+    mb_mei_handler_fn handler = NULL;
+    void *context = NULL;
+    uint8_t mei_type;
+    uint8_t handler_result;
+    size_t response_data_length = 0u;
+    size_t response_limit;
+
+    if (request_pdu == NULL || response_pdu == NULL ||
+        response_pdu_len == NULL) {
+        return MB_EX_SERVER_FAILURE;
+    }
+    *response_pdu_len = 0u;
+    if (request_pdu_len < 2u ||
+        request_pdu_len > MODBUS_PDU_MAX_SIZE ||
+        request_pdu[0] != MB_MEI_FUNCTION_CODE) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+
+    mei_type = request_pdu[1];
+    if (mei_type == MB_MEI_TYPE_READ_DEVICE_IDENTIFICATION) {
+        if (request_pdu_len != 4u) {
+            return MB_EX_ILLEGAL_DATA_VALUE;
+        }
+        return mb_device_id_process_request(request_pdu[2],
+                                            request_pdu[3],
+                                            response_pdu,
+                                            response_capacity,
+                                            response_pdu_len);
+    }
+    if (mei_type == MB_MEI_TYPE_CANOPEN_GENERAL_REFERENCE) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+
+    mb_lock();
+    for (size_t i = 0u; i < MB_MEI_MAX_HANDLERS; ++i) {
+        if (mei_state.handlers[i].in_use != 0u &&
+            mei_state.handlers[i].mei_type == mei_type) {
+            handler = mei_state.handlers[i].handler;
+            context = mei_state.handlers[i].context;
+            break;
+        }
+    }
+    mb_unlock();
+
+    if (handler == NULL) {
+        return MB_EX_ILLEGAL_DATA_VALUE;
+    }
+
+    response_limit = response_capacity < MODBUS_PDU_MAX_SIZE
+                         ? response_capacity
+                         : MODBUS_PDU_MAX_SIZE;
+    if (response_limit < 2u) {
+        return MB_EX_SERVER_FAILURE;
+    }
+
+    handler_result = handler(context,
+                             mei_type,
+                             &request_pdu[2],
+                             request_pdu_len - 2u,
+                             &response_pdu[2],
+                             response_limit - 2u,
+                             &response_data_length);
+    if (handler_result != MB_MEI_HANDLER_OK) {
+        return mei_exception_is_valid(handler_result)
+                   ? handler_result
+                   : MB_EX_SERVER_FAILURE;
+    }
+    if (response_data_length > response_limit - 2u ||
+        response_data_length > MB_MEI_MAX_DATA_LENGTH) {
+        return MB_EX_SERVER_FAILURE;
+    }
+
+    response_pdu[0] = MB_MEI_FUNCTION_CODE;
+    response_pdu[1] = mei_type;
+    *response_pdu_len = 2u + response_data_length;
+    return 0u;
 }
 
 int mb_device_id_configure(uint8_t conformity_level,
